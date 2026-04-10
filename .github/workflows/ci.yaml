@@ -1,0 +1,49 @@
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+name: CI
+
+jobs:
+  build:
+    name: Build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rust-toolchain
+        run: rustc --version
+
+      - name: cargo fetch --locked
+        run: cargo fetch --locked
+
+      - name: cargo check kernels
+        run: cargo check -p collatz -p mandelbrot
+
+      - name: cargo check runner
+        run: cargo check -p runner
+
+      # Try to install Intel OpenCL CPU runtime and run the samples.
+      - name: Install Intel OpenCL CPU runtime
+        continue-on-error: true
+        run: |
+          # Intel OpenCL CPU runtime (oneAPI)
+          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | sudo gpg --dearmor -o /usr/share/keyrings/intel-oneapi-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/intel-oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/intel-oneapi.list
+          sudo apt-get update
+          sudo apt-get install -y intel-oneapi-runtime-opencl ocl-icd-opencl-dev
+          # Set up environment
+          source /opt/intel/oneapi/setvars.sh 2>/dev/null || true
+          echo "/opt/intel/oneapi/compiler/latest/lib" | sudo tee /etc/ld.so.conf.d/intel-opencl.conf
+          sudo ldconfig
+
+      - name: Run samples on Intel OpenCL
+        continue-on-error: true
+        run: |
+          source /opt/intel/oneapi/setvars.sh 2>/dev/null || true
+          cargo run -p runner --release

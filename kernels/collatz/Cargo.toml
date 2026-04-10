@@ -1,0 +1,11 @@
+[package]
+name = "collatz"
+version = "0.1.0"
+edition.workspace = true
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+spirv-std.workspace = true
+glam.workspace = true
