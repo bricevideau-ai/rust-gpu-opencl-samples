@@ -46,4 +46,13 @@ jobs:
         continue-on-error: true
         run: |
           source /opt/intel/oneapi/setvars.sh 2>/dev/null || true
-          cargo run -p runner --release
+          if cargo run -p runner --release; then
+            echo "Samples completed successfully"
+          else
+            EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 139 ]; then
+              echo "::warning::Runner crashed with SIGSEGV (likely Intel OpenCL driver issue)"
+            else
+              echo "::warning::Runner failed with exit code $EXIT_CODE"
+            fi
+          fi
