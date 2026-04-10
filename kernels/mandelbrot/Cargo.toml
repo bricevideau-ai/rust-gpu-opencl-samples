@@ -9,3 +9,6 @@ crate-type = ["dylib"]
 [dependencies]
 spirv-std.workspace = true
 glam.workspace = true
+
+[lints]
+workspace = true

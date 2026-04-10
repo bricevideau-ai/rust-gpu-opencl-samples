@@ -3,6 +3,17 @@
 use glam::USizeVec3;
 use spirv_std::{glam, spirv};
 
+/// Viewport parameters for the Mandelbrot computation.
+#[derive(Copy, Clone)]
+pub struct Viewport {
+    pub width: u32,
+    pub height: u32,
+    pub cx_min: f32,
+    pub cx_max: f32,
+    pub cy_min: f32,
+    pub cy_max: f32,
+}
+
 /// Compute the Mandelbrot iteration count for a point (cx, cy) in the
 /// complex plane. Returns the number of iterations before escape, or
 /// `max_iter` if the point is in the set.
@@ -27,36 +38,23 @@ fn mandelbrot(cx: f32, cy: f32, max_iter: u32) -> u32 {
 ///
 /// Each work item computes one pixel. The output buffer is a flat array
 /// of iteration counts in row-major order.
-///
-/// Parameters:
-/// - `id`: global invocation ID (x = column, y = row)
-/// - `output`: iteration count per pixel (width * height elements)
-/// - `width`: image width in pixels
-/// - `height`: image height in pixels
-/// - `max_iter`: maximum iteration count
-/// - `cx_min`, `cx_max`, `cy_min`, `cy_max`: complex plane bounds
 #[spirv(kernel)]
 pub fn mandelbrot_kernel(
     #[spirv(global_invocation_id)] id: USizeVec3,
     #[spirv(cross_workgroup)] output: &mut [u32],
-    width: u32,
-    height: u32,
+    vp: Viewport,
     max_iter: u32,
-    cx_min: f32,
-    cx_max: f32,
-    cy_min: f32,
-    cy_max: f32,
 ) {
     let px = id.x as u32;
     let py = id.y as u32;
 
-    if px >= width || py >= height {
+    if px >= vp.width || py >= vp.height {
         return;
     }
 
-    let cx = cx_min + (px as f32 / width as f32) * (cx_max - cx_min);
-    let cy = cy_min + (py as f32 / height as f32) * (cy_max - cy_min);
+    let cx = vp.cx_min + (px as f32 / vp.width as f32) * (vp.cx_max - vp.cx_min);
+    let cy = vp.cy_min + (py as f32 / vp.height as f32) * (vp.cy_max - vp.cy_min);
 
-    let index = (py * width + px) as usize;
+    let index = (py * vp.width + px) as usize;
     output[index] = mandelbrot(cx, cy, max_iter);
 }

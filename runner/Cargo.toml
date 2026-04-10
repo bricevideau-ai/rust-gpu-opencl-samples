@@ -6,3 +6,6 @@ edition.workspace = true
 [dependencies]
 spirv-builder.workspace = true
 opencl3.workspace = true
+
+[lints]
+workspace = true

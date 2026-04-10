@@ -156,6 +156,26 @@ impl KernelArg for f32 {
     }
 }
 
+/// Viewport struct matching the kernel's `Viewport` type layout.
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct Viewport {
+    width: u32,
+    height: u32,
+    cx_min: f32,
+    cx_max: f32,
+    cy_min: f32,
+    cy_max: f32,
+}
+
+impl KernelArg for Viewport {
+    fn set(&self, exec: &mut ExecuteKernel<'_>) {
+        unsafe {
+            exec.set_arg(self);
+        }
+    }
+}
+
 fn compile_kernel(path: &Path) -> Result<(Vec<u8>, Duration), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let result: CompileResult = SpirvBuilder::new(path, "spirv-unknown-opencl1.2").build()?;
@@ -235,10 +255,15 @@ fn run_mandelbrot(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     let width: u32 = 80;
     let height: u32 = 40;
     let max_iter: u32 = 100;
-    let cx_min: f32 = -2.0;
-    let cx_max: f32 = 1.0;
-    let cy_min: f32 = -1.0;
-    let cy_max: f32 = 1.0;
+
+    let vp = Viewport {
+        width,
+        height,
+        cx_min: -2.0,
+        cx_max: 1.0,
+        cy_min: -1.0,
+        cy_max: 1.0,
+    };
 
     let n = (width * height) as usize;
     let mut pixels = vec![0u32; n];
@@ -247,9 +272,7 @@ fn run_mandelbrot(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     let event = ocl.run(
         &kernel,
         &[width as usize, height as usize],
-        &[
-            &buf, &width, &height, &max_iter, &cx_min, &cx_max, &cy_min, &cy_max,
-        ],
+        &[&buf, &vp, &max_iter],
     )?;
     ocl.download(&buf, &mut pixels)?;
 
