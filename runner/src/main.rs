@@ -6,7 +6,7 @@ use opencl3::kernel::{ExecuteKernel, Kernel};
 use opencl3::memory::{Buffer, CL_MEM_READ_WRITE};
 use opencl3::program::Program;
 use opencl3::types::{CL_BLOCKING, cl_device_id};
-use spirv_builder::{CompileResult, SpirvBuilder};
+use spirv_builder::{Capability, CompileResult, SpirvBuilder};
 use std::path::Path;
 use std::ptr;
 use std::time::{Duration, Instant};
@@ -86,30 +86,44 @@ impl OclContext {
         &self,
         kernel: &Kernel,
         global_work_size: &[usize],
+        local_work_size: Option<&[usize]>,
         args: &[&dyn KernelArg],
     ) -> Result<Event, Box<dyn std::error::Error>> {
         let mut exec = ExecuteKernel::new(kernel);
         for arg in args {
             arg.set(&mut exec);
         }
-        let event = unsafe {
-            match global_work_size.len() {
-                1 => exec
-                    .set_global_work_size(global_work_size[0])
-                    .enqueue_nd_range(&self.queue)?,
-                2 => exec
-                    .set_global_work_sizes(&[global_work_size[0], global_work_size[1]])
-                    .enqueue_nd_range(&self.queue)?,
-                3 => exec
-                    .set_global_work_sizes(&[
-                        global_work_size[0],
-                        global_work_size[1],
-                        global_work_size[2],
-                    ])
-                    .enqueue_nd_range(&self.queue)?,
-                _ => return Err("invalid work dimensions".into()),
+        match global_work_size.len() {
+            1 => {
+                exec.set_global_work_size(global_work_size[0]);
             }
-        };
+            2 => {
+                exec.set_global_work_sizes(&[global_work_size[0], global_work_size[1]]);
+            }
+            3 => {
+                exec.set_global_work_sizes(&[
+                    global_work_size[0],
+                    global_work_size[1],
+                    global_work_size[2],
+                ]);
+            }
+            _ => return Err("invalid work dimensions".into()),
+        }
+        if let Some(lws) = local_work_size {
+            match lws.len() {
+                1 => {
+                    exec.set_local_work_size(lws[0]);
+                }
+                2 => {
+                    exec.set_local_work_sizes(&[lws[0], lws[1]]);
+                }
+                3 => {
+                    exec.set_local_work_sizes(&[lws[0], lws[1], lws[2]]);
+                }
+                _ => return Err("invalid local work dimensions".into()),
+            }
+        }
+        let event = unsafe { exec.enqueue_nd_range(&self.queue)? };
         event.wait()?;
         Ok(event)
     }
@@ -176,9 +190,34 @@ impl KernelArg for Viewport {
     }
 }
 
+/// A local (workgroup) memory allocation, set as a kernel argument via `clSetKernelArg(NULL)`.
+/// Used when workgroup memory is a kernel parameter rather than a module-scope variable.
+#[allow(dead_code)]
+struct LocalBuffer {
+    size_bytes: usize,
+}
+
+impl KernelArg for LocalBuffer {
+    fn set(&self, exec: &mut ExecuteKernel<'_>) {
+        unsafe {
+            exec.set_arg_local_buffer(self.size_bytes);
+        }
+    }
+}
+
 fn compile_kernel(path: &Path) -> Result<(Vec<u8>, Duration), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let result: CompileResult = SpirvBuilder::new(path, "spirv-unknown-opencl1.2").build()?;
+    let spv_path = result.module.unwrap_single();
+    let spv_bytes = std::fs::read(spv_path)?;
+    Ok((spv_bytes, start.elapsed()))
+}
+
+fn compile_kernel_opencl2(path: &Path) -> Result<(Vec<u8>, Duration), Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let result: CompileResult = SpirvBuilder::new(path, "spirv-unknown-opencl2.0")
+        .capability(Capability::Groups)
+        .build()?;
     let spv_path = result.module.unwrap_single();
     let spv_bytes = std::fs::read(spv_path)?;
     Ok((spv_bytes, start.elapsed()))
@@ -207,7 +246,7 @@ fn run_collatz(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     let n = data.len();
 
     let buf = ocl.upload(&data)?;
-    let event = ocl.run(&kernel, &[n], &[&buf])?;
+    let event = ocl.run(&kernel, &[n], None, &[&buf])?;
     ocl.download(&buf, &mut data)?;
 
     if let Some(d) = profiling_duration(&event) {
@@ -272,6 +311,7 @@ fn run_mandelbrot(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     let event = ocl.run(
         &kernel,
         &[width as usize, height as usize],
+        None,
         &[&buf, &vp, &max_iter],
     )?;
     ocl.download(&buf, &mut pixels)?;
@@ -299,6 +339,93 @@ fn run_mandelbrot(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn run_prefix_sum(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n═══ Prefix Sum ═══");
+    let kernel_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernels/prefix_sum");
+    let (spv_bytes, compile_time) = compile_kernel_opencl2(&kernel_crate)?;
+    println!("Compiled: {} bytes, {compile_time:?}", spv_bytes.len());
+
+    let program = ocl.build_program(&spv_bytes)?;
+    let kernel = Kernel::create(&program, "prefix_sum_kernel")?;
+
+    const WG_SIZE: usize = 32;
+
+    let num_workgroups = 4;
+    let n = WG_SIZE * num_workgroups; // 128 elements
+    let input: Vec<u32> = (1..=n as u32).collect();
+
+    let input_buf = ocl.upload(&input)?;
+    let output_buf = ocl.upload(&vec![0u32; n])?;
+    let totals_buf = ocl.upload(&vec![0u32; num_workgroups])?;
+
+    let event = ocl.run(
+        &kernel,
+        &[n],
+        Some(&[WG_SIZE]),
+        &[&input_buf, &output_buf, &totals_buf],
+    )?;
+
+    let mut output = vec![0u32; n];
+    let mut totals = vec![0u32; num_workgroups];
+    ocl.download(&output_buf, &mut output)?;
+    ocl.download(&totals_buf, &mut totals)?;
+
+    if let Some(d) = profiling_duration(&event) {
+        println!("Kernel:  {d:?} ({n} elements, {num_workgroups} workgroups of {WG_SIZE})");
+    }
+
+    // Compute CPU reference (exclusive prefix sum per workgroup).
+    let mut expected = vec![0u32; n];
+    let mut expected_totals = vec![0u32; num_workgroups];
+    for (wg, total) in expected_totals.iter_mut().enumerate() {
+        let base = wg * WG_SIZE;
+        let mut acc = 0u32;
+        for i in 0..WG_SIZE {
+            expected[base + i] = acc;
+            acc += input[base + i];
+        }
+        *total = acc;
+    }
+
+    // Verify prefix sums.
+    let mut ok = true;
+    for i in 0..n {
+        if output[i] != expected[i] {
+            eprintln!(
+                "FAIL at [{i}]: got {}, expected {} (input={})",
+                output[i], expected[i], input[i]
+            );
+            ok = false;
+        }
+    }
+    // Verify workgroup totals.
+    for (wg, (got, exp)) in totals.iter().zip(expected_totals.iter()).enumerate() {
+        if got != exp {
+            eprintln!("FAIL total[{wg}]: got {got}, expected {exp}");
+            ok = false;
+        }
+    }
+    if ok {
+        println!("Verify:  passed ({n} prefix sums, {num_workgroups} totals)");
+    }
+
+    // Print first workgroup's results.
+    println!("Workgroup 0 (exclusive prefix sum):");
+    print!("  input:  ");
+    for val in &input[..WG_SIZE] {
+        print!("{val:>4}");
+    }
+    println!();
+    print!("  output: ");
+    for val in &output[..WG_SIZE] {
+        print!("{val:>4}");
+    }
+    println!();
+    println!("Workgroup totals: {totals:?}");
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ocl = OclContext::new()?;
 
@@ -306,9 +433,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match sample.as_deref() {
         Some("collatz") => run_collatz(&ocl)?,
         Some("mandelbrot") => run_mandelbrot(&ocl)?,
+        Some("prefix_sum") => run_prefix_sum(&ocl)?,
         _ => {
             run_collatz(&ocl)?;
             run_mandelbrot(&ocl)?;
+            run_prefix_sum(&ocl)?;
         }
     }
 

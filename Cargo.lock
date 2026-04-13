@@ -707,6 +707,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "prefix-sum"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "spirv-std",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"

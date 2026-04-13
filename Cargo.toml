@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "kernels/collatz",
     "kernels/mandelbrot",
+    "kernels/prefix_sum",
     "runner",
 ]
 

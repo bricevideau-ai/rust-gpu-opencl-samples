@@ -12,6 +12,7 @@ Depends on the `opencl-kernel-support` branch of https://github.com/bricevideau-
 kernels/
   collatz/      — Collatz conjecture kernel
   mandelbrot/   — Mandelbrot set with complex numbers (num-complex)
+  prefix_sum/   — Exclusive prefix sum using subgroup ops + shared memory (OpenCL 2.0)
 runner/         — Host-side OpenCL runner with helpers
 ```
 
@@ -26,11 +27,21 @@ runner/         — Host-side OpenCL runner with helpers
 - Scalar args: just by value (`max_iter: u32`)
 - Struct args: by value, works for scalar-only structs (`vp: Viewport`)
 
+### OpenCL 2.0 / subgroup kernels
+- Target `spirv-unknown-opencl2.0` with `.capability(Capability::Groups)` in SpirvBuilder
+- `#[spirv(kernel(threads(N)))]` to declare workgroup size
+- `#[spirv(workgroup)] shared: &mut [T; N]` for local/shared memory
+- `#[spirv(subgroup_id)]`, `#[spirv(subgroup_local_invocation_id)]`, `#[spirv(num_subgroups)]` builtins
+- `workgroup_memory_barrier_with_group_sync()` for barriers
+- `group_exclusive_i_add`, `group_i_add`, etc. from `spirv_std::arch` for subgroup ops
+
 ### Runner
 - `OclContext` — wraps device, context, queue
 - `DeviceSlice<T>` — buffer + length pair (matches Rust-GPU slice decomposition)
-- `KernelArg` trait — implemented for `DeviceSlice`, `u32`, `f32`, `Viewport`
+- `LocalBuffer` — workgroup memory allocation (calls `set_arg_local_buffer`)
+- `KernelArg` trait — implemented for `DeviceSlice`, `u32`, `f32`, `Viewport`, `LocalBuffer`
 - Slices automatically set two kernel args (pointer + usize length)
+- `run()` accepts optional `local_work_size` for workgroup-based kernels
 
 ### Dependencies
 - Uses `use-compiled-tools` feature (not `use-installed-tools`) — spirv-opt runs in-process with crash isolation via fork()
@@ -40,10 +51,11 @@ runner/         — Host-side OpenCL runner with helpers
 ## How to build and run
 
 ```bash
-cargo check -p collatz -p mandelbrot -p runner   # check everything compiles
+cargo check -p collatz -p mandelbrot -p prefix-sum -p runner  # check everything compiles
 cargo run -p runner --release                     # run all samples (needs OpenCL runtime)
 cargo run -p runner --release -- collatz           # run specific sample
 cargo run -p runner --release -- mandelbrot        # run specific sample
+cargo run -p runner --release -- prefix_sum        # run specific sample (OpenCL 2.0)
 ```
 
 ## How to add a new sample
