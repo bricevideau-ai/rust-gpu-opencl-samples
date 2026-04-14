@@ -341,7 +341,7 @@ fn run_mandelbrot(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_reduce(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n═══ Hierarchical Reduction ═══");
-    let kernel_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernels/prefix_sum");
+    let kernel_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernels/reduce");
     let (spv_bytes, compile_time) = compile_kernel_opencl2(&kernel_crate)?;
     println!("Compiled: {} bytes, {compile_time:?}", spv_bytes.len());
 
@@ -357,12 +357,7 @@ fn run_reduce(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     let input_buf = ocl.upload(&input)?;
     let output_buf = ocl.upload(&vec![0u32; num_workgroups])?;
 
-    let event = ocl.run(
-        &kernel,
-        &[n],
-        Some(&[WG_SIZE]),
-        &[&input_buf, &output_buf],
-    )?;
+    let event = ocl.run(&kernel, &[n], Some(&[WG_SIZE]), &[&input_buf, &output_buf])?;
 
     let mut output = vec![0u32; num_workgroups];
     ocl.download(&output_buf, &mut output)?;

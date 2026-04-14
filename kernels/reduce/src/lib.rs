@@ -1,5 +1,5 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
-#![cfg_attr(target_arch = "spirv", feature(asm_experimental_arch))]
+#![allow(clippy::too_many_arguments)]
 
 use glam::USizeVec3;
 use spirv_std::arch::{group_i_add, workgroup_memory_barrier_with_group_sync};
@@ -18,11 +18,6 @@ const WG_SIZE: usize = 32;
 ///   4. Barrier.
 ///   5. Work item 0 reduces the partial sums across subgroups.
 ///   6. Work item 0 writes the workgroup total to the output buffer.
-///
-/// NOTE: pocl 7.2-pre (main) has a regression where the last workgroup
-/// in a multi-workgroup dispatch duplicates the previous workgroup's
-/// result. This is a pocl bug, not a kernel issue — pocl 6.0 and
-/// Intel GPU produce correct results.
 #[spirv(kernel(threads(32)))]
 pub fn reduce_kernel(
     #[spirv(global_invocation_id)] global_id: USizeVec3,
@@ -51,9 +46,6 @@ pub fn reduce_kernel(
     }
 
     workgroup_memory_barrier_with_group_sync();
-
-    // Debug: every work item prints its gid.
-    spirv_std::printf!("lid=%u gid=%u sg_id=%u sg_lid=%u\n", lid, gid as u32, subgroup_id, subgroup_local_id);
 
     // Step 4: work item 0 reduces across subgroups and writes output.
     if lid == 0 {

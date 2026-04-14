@@ -12,7 +12,7 @@ Depends on the `opencl-kernel-support` branch of https://github.com/bricevideau-
 kernels/
   collatz/      — Collatz conjecture kernel
   mandelbrot/   — Mandelbrot set with complex numbers (num-complex)
-  prefix_sum/   — Exclusive prefix sum using subgroup ops + shared memory (OpenCL 2.0)
+  reduce/       — Hierarchical reduction using subgroup ops + shared memory (OpenCL 2.0)
 runner/         — Host-side OpenCL runner with helpers
 ```
 
