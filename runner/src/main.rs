@@ -339,14 +339,14 @@ fn run_mandelbrot(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn run_prefix_sum(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n═══ Prefix Sum ═══");
+fn run_reduce(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n═══ Hierarchical Reduction ═══");
     let kernel_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernels/prefix_sum");
     let (spv_bytes, compile_time) = compile_kernel_opencl2(&kernel_crate)?;
     println!("Compiled: {} bytes, {compile_time:?}", spv_bytes.len());
 
     let program = ocl.build_program(&spv_bytes)?;
-    let kernel = Kernel::create(&program, "prefix_sum_kernel")?;
+    let kernel = Kernel::create(&program, "reduce_kernel")?;
 
     const WG_SIZE: usize = 32;
 
@@ -355,73 +355,44 @@ fn run_prefix_sum(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     let input: Vec<u32> = (1..=n as u32).collect();
 
     let input_buf = ocl.upload(&input)?;
-    let output_buf = ocl.upload(&vec![0u32; n])?;
-    let totals_buf = ocl.upload(&vec![0u32; num_workgroups])?;
+    let output_buf = ocl.upload(&vec![0u32; num_workgroups])?;
 
     let event = ocl.run(
         &kernel,
         &[n],
         Some(&[WG_SIZE]),
-        &[&input_buf, &output_buf, &totals_buf],
+        &[&input_buf, &output_buf],
     )?;
 
-    let mut output = vec![0u32; n];
-    let mut totals = vec![0u32; num_workgroups];
+    let mut output = vec![0u32; num_workgroups];
     ocl.download(&output_buf, &mut output)?;
-    ocl.download(&totals_buf, &mut totals)?;
 
     if let Some(d) = profiling_duration(&event) {
         println!("Kernel:  {d:?} ({n} elements, {num_workgroups} workgroups of {WG_SIZE})");
     }
 
-    // Compute CPU reference (exclusive prefix sum per workgroup).
-    let mut expected = vec![0u32; n];
-    let mut expected_totals = vec![0u32; num_workgroups];
-    for (wg, total) in expected_totals.iter_mut().enumerate() {
+    // Compute CPU reference (sum per workgroup).
+    let mut expected = vec![0u32; num_workgroups];
+    for (wg, total) in expected.iter_mut().enumerate() {
         let base = wg * WG_SIZE;
-        let mut acc = 0u32;
-        for i in 0..WG_SIZE {
-            expected[base + i] = acc;
-            acc += input[base + i];
-        }
-        *total = acc;
+        *total = input[base..base + WG_SIZE].iter().sum();
     }
 
-    // Verify prefix sums.
+    // Verify.
     let mut ok = true;
-    for i in 0..n {
-        if output[i] != expected[i] {
-            eprintln!(
-                "FAIL at [{i}]: got {}, expected {} (input={})",
-                output[i], expected[i], input[i]
-            );
-            ok = false;
-        }
-    }
-    // Verify workgroup totals.
-    for (wg, (got, exp)) in totals.iter().zip(expected_totals.iter()).enumerate() {
+    for (wg, (got, exp)) in output.iter().zip(expected.iter()).enumerate() {
         if got != exp {
-            eprintln!("FAIL total[{wg}]: got {got}, expected {exp}");
+            eprintln!("FAIL wg[{wg}]: got {got}, expected {exp}");
             ok = false;
         }
     }
     if ok {
-        println!("Verify:  passed ({n} prefix sums, {num_workgroups} totals)");
+        println!("Verify:  passed ({num_workgroups} workgroup reductions)");
     }
 
-    // Print first workgroup's results.
-    println!("Workgroup 0 (exclusive prefix sum):");
-    print!("  input:  ");
-    for val in &input[..WG_SIZE] {
-        print!("{val:>4}");
-    }
-    println!();
-    print!("  output: ");
-    for val in &output[..WG_SIZE] {
-        print!("{val:>4}");
-    }
-    println!();
-    println!("Workgroup totals: {totals:?}");
+    // Print results.
+    println!("Workgroup sums: {output:?}");
+    println!("Expected:       {expected:?}");
 
     Ok(())
 }
@@ -433,11 +404,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match sample.as_deref() {
         Some("collatz") => run_collatz(&ocl)?,
         Some("mandelbrot") => run_mandelbrot(&ocl)?,
-        Some("prefix_sum") => run_prefix_sum(&ocl)?,
+        Some("reduce") => run_reduce(&ocl)?,
         _ => {
             run_collatz(&ocl)?;
             run_mandelbrot(&ocl)?;
-            run_prefix_sum(&ocl)?;
+            run_reduce(&ocl)?;
         }
     }
 

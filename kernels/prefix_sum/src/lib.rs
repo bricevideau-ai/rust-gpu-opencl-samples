@@ -1,68 +1,69 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
+#![cfg_attr(target_arch = "spirv", feature(asm_experimental_arch))]
 
 use glam::USizeVec3;
-use spirv_std::arch::{
-    group_exclusive_i_add, group_i_add, workgroup_memory_barrier_with_group_sync,
-};
+use spirv_std::arch::{group_i_add, workgroup_memory_barrier_with_group_sync};
 use spirv_std::{glam, spirv};
 
 const WG_SIZE: usize = 32;
 
-/// Workgroup-level exclusive prefix sum using subgroup operations and shared memory.
+/// Hierarchical reduction using subgroup ops and shared memory.
 ///
 /// Algorithm:
-///   1. Each work item loads one element from `input` into shared memory.
-///   2. Barrier — ensures all loads are visible.
-///   3. Subgroup exclusive scan (`group_exclusive_i_add`) computes the prefix sum
-///      across all work items in the subgroup. On many OpenCL implementations
-///      (including pocl), the subgroup spans the entire workgroup, so one call
-///      produces the full workgroup-level prefix sum.
-///   4. Subgroup reduce (`group_i_add`) computes the workgroup total.
-///   5. Work item 0 stores the total in shared memory for verification.
-///   6. Barrier — ensures the total is visible.
-///   7. Each work item writes its prefix sum to `output`. If a `totals` buffer
-///      is provided, work item 0 writes the workgroup total there.
+///   1. Each work item copies its input element into shared memory.
+///   2. Barrier.
+///   3. Each subgroup reduces its portion via `group_i_add`.
+///      The first item of each subgroup (`subgroup_local_id == 0`)
+///      writes the partial sum to `shared[subgroup_id]`.
+///   4. Barrier.
+///   5. Work item 0 reduces the partial sums across subgroups.
+///   6. Work item 0 writes the workgroup total to the output buffer.
 ///
-/// NOTE: Using subgroup builtins (`subgroup_id`, `num_subgroups`) together with
-/// subgroup ops and workgroup memory causes a crash on pocl 6.0 CPU. This kernel
-/// avoids that combination. On devices where subgroup_size < workgroup_size, a
-/// multi-level approach with cross-subgroup propagation would be needed.
+/// NOTE: pocl 7.2-pre (main) has a regression where the last workgroup
+/// in a multi-workgroup dispatch duplicates the previous workgroup's
+/// result. This is a pocl bug, not a kernel issue — pocl 6.0 and
+/// Intel GPU produce correct results.
 #[spirv(kernel(threads(32)))]
-pub fn prefix_sum_kernel(
+pub fn reduce_kernel(
     #[spirv(global_invocation_id)] global_id: USizeVec3,
     #[spirv(local_invocation_id)] local_id: USizeVec3,
+    #[spirv(subgroup_id)] subgroup_id: u32,
+    #[spirv(subgroup_local_invocation_id)] subgroup_local_id: u32,
+    #[spirv(num_subgroups)] num_subgroups: u32,
     #[spirv(cross_workgroup)] input: &[u32],
     #[spirv(cross_workgroup)] output: &mut [u32],
-    #[spirv(cross_workgroup)] totals: &mut [u32],
     #[spirv(workgroup)] shared: &mut [u32; WG_SIZE],
 ) {
-    let lid = local_id.x as usize;
+    let lid = local_id.x as u32;
     let gid = global_id.x;
 
-    // Load input into shared memory.
-    shared[lid] = input[gid];
+    // Step 1: copy input to shared memory.
+    shared[lid as usize] = input[gid];
 
     workgroup_memory_barrier_with_group_sync();
 
-    // Subgroup exclusive scan — computes prefix sum within the subgroup.
-    let scanned = group_exclusive_i_add(shared[lid]);
+    // Step 2: subgroup reduce.
+    let partial = group_i_add(shared[lid as usize]);
 
-    // Subgroup reduce — total of all elements in the subgroup.
-    let total = group_i_add(shared[lid]);
-
-    // Work item 0 stores the workgroup total in shared memory.
-    if lid == 0 {
-        shared[0] = total;
+    // Step 3: first item of each subgroup writes partial sum.
+    if subgroup_local_id == 0 {
+        shared[subgroup_id as usize] = partial;
     }
 
     workgroup_memory_barrier_with_group_sync();
 
-    // Write prefix sum to output.
-    output[gid] = scanned;
+    // Debug: every work item prints its gid.
+    spirv_std::printf!("lid=%u gid=%u sg_id=%u sg_lid=%u\n", lid, gid as u32, subgroup_id, subgroup_local_id);
 
-    // Work item 0 writes the workgroup total to the totals buffer.
+    // Step 4: work item 0 reduces across subgroups and writes output.
     if lid == 0 {
-        let wg_id = global_id.x / WG_SIZE;
-        totals[wg_id] = shared[0];
+        let mut total = 0u32;
+        let mut i = 0u32;
+        while i < num_subgroups {
+            total += shared[i as usize];
+            i += 1;
+        }
+        let wg_id = gid / WG_SIZE;
+        output[wg_id] = total;
     }
 }
