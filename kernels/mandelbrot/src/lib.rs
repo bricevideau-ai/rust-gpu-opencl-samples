@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
+#![cfg_attr(target_arch = "spirv", feature(asm_experimental_arch))]
 
 use glam::USizeVec3;
 use num_complex::Complex32;
@@ -44,6 +45,19 @@ pub fn mandelbrot_kernel(
 ) {
     let px = id.x as u32;
     let py = id.y as u32;
+
+    // First work item prints the viewport parameters.
+    if px == 0 && py == 0 {
+        spirv_std::printf!(
+            "Mandelbrot %ux%u x=[%f, %f] y=[%f, %f]\n",
+            vp.width,
+            vp.height,
+            vp.cx_min,
+            vp.cx_max,
+            vp.cy_min,
+            vp.cy_max
+        );
+    }
 
     if px >= vp.width || py >= vp.height {
         return;
