@@ -8,13 +8,15 @@ OpenCL compute kernels written in Rust using [rust-gpu](https://github.com/Rust-
 Computes the length of the [Collatz sequence](https://en.wikipedia.org/wiki/Collatz_conjecture) for each integer 1..2²⁰, finding record-holders ([OEIS A006877](https://oeis.org/A006877)).
 
 ### Mandelbrot
-Computes the [Mandelbrot set](https://en.wikipedia.org/wiki/Mandelbrot_set) and renders it as ASCII art.
+Computes the [Mandelbrot set](https://en.wikipedia.org/wiki/Mandelbrot_set) and renders it as ASCII art. Uses `printf!` to print viewport parameters from the GPU.
+
+### Reduce
+Hierarchical reduction using subgroup operations (`group_i_add`) and shared/local memory. Demonstrates subgroup builtins, workgroup barriers, and cross-subgroup communication.
 
 ## Requirements
 
 - Rust nightly (see `rust-toolchain.toml`)
-- `spirv-tools` installed (`spirv-val`, `spirv-opt`)
-- An OpenCL runtime with SPIR-V IL support (e.g., pocl 6.0+, Intel OpenCL CPU runtime)
+- An OpenCL runtime with SPIR-V IL support (e.g., pocl 6.0+, Intel OpenCL GPU/CPU runtime)
 
 ## Running
 
@@ -25,6 +27,7 @@ cargo run -p runner --release
 # Run a specific sample
 cargo run -p runner --release -- collatz
 cargo run -p runner --release -- mandelbrot
+cargo run -p runner --release -- reduce
 ```
 
 ## Project Structure
@@ -32,7 +35,8 @@ cargo run -p runner --release -- mandelbrot
 ```
 kernels/
   collatz/     — Collatz conjecture kernel (#[spirv(kernel)])
-  mandelbrot/  — Mandelbrot set kernel (#[spirv(kernel)])
+  mandelbrot/  — Mandelbrot set kernel with printf (#[spirv(kernel)])
+  reduce/      — Hierarchical reduction with subgroup ops (OpenCL 2.0)
 runner/        — Host-side OpenCL runner (compiles + executes kernels)
 ```
 

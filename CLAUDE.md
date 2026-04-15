@@ -11,7 +11,7 @@ Depends on the `opencl-kernel-support` branch of https://github.com/bricevideau-
 ```
 kernels/
   collatz/      — Collatz conjecture kernel
-  mandelbrot/   — Mandelbrot set with complex numbers (num-complex)
+  mandelbrot/   — Mandelbrot set with complex numbers (num-complex), uses printf
   reduce/       — Hierarchical reduction using subgroup ops + shared memory (OpenCL 2.0)
 runner/         — Host-side OpenCL runner with helpers
 ```
@@ -30,32 +30,38 @@ runner/         — Host-side OpenCL runner with helpers
 ### OpenCL 2.0 / subgroup kernels
 - Target `spirv-unknown-opencl2.0` with `.capability(Capability::Groups)` in SpirvBuilder
 - `#[spirv(kernel(threads(N)))]` to declare workgroup size
-- `#[spirv(workgroup)] shared: &mut [T; N]` for local/shared memory
+- `#[spirv(workgroup)] shared: &mut [T; N]` for local/shared memory (module-scope, not a kernel arg)
 - `#[spirv(subgroup_id)]`, `#[spirv(subgroup_local_invocation_id)]`, `#[spirv(num_subgroups)]` builtins
 - `workgroup_memory_barrier_with_group_sync()` for barriers
 - `group_exclusive_i_add`, `group_i_add`, etc. from `spirv_std::arch` for subgroup ops
 
+### Printf
+- `spirv_std::printf!("format %u\n", value)` — OpenCL printf via `OpenCL.std` extended instruction set
+- `spirv_std::printfln!("format %u", value)` — auto-appends newline
+- `%f` accepts both f32 and f64 (no promotion needed)
+- Requires `#![cfg_attr(target_arch = "spirv", feature(asm_experimental_arch))]` in the kernel crate
+
 ### Runner
 - `OclContext` — wraps device, context, queue
 - `DeviceSlice<T>` — buffer + length pair (matches Rust-GPU slice decomposition)
-- `LocalBuffer` — workgroup memory allocation (calls `set_arg_local_buffer`)
-- `KernelArg` trait — implemented for `DeviceSlice`, `u32`, `f32`, `Viewport`, `LocalBuffer`
+- `KernelArg` trait — implemented for `DeviceSlice`, `u32`, `f32`, `Viewport`
 - Slices automatically set two kernel args (pointer + usize length)
 - `run()` accepts optional `local_work_size` for workgroup-based kernels
+- `compile_kernel()` for OpenCL 1.2, `compile_kernel_opencl2()` for OpenCL 2.0 + Groups
 
 ### Dependencies
-- Uses `use-compiled-tools` feature (not `use-installed-tools`) — spirv-opt runs in-process with crash isolation via fork()
+- Uses `use-compiled-tools` feature — spirv-opt runs in-process with crash isolation via fork()
 - `num-complex` with `default-features = false` works on SPIR-V targets
 - `glam >= 0.30.8` with `default-features = false` for vector types
 
 ## How to build and run
 
 ```bash
-cargo check -p collatz -p mandelbrot -p prefix-sum -p runner  # check everything compiles
-cargo run -p runner --release                     # run all samples (needs OpenCL runtime)
-cargo run -p runner --release -- collatz           # run specific sample
-cargo run -p runner --release -- mandelbrot        # run specific sample
-cargo run -p runner --release -- prefix_sum        # run specific sample (OpenCL 2.0)
+cargo check -p collatz -p mandelbrot -p reduce -p runner  # check everything compiles
+cargo run -p runner --release                              # run all samples (needs OpenCL runtime)
+cargo run -p runner --release -- collatz                   # run specific sample
+cargo run -p runner --release -- mandelbrot                # run specific sample
+cargo run -p runner --release -- reduce                    # run specific sample (OpenCL 2.0)
 ```
 
 ## How to add a new sample
@@ -73,10 +79,10 @@ cargo run -p runner --release -- prefix_sum        # run specific sample (OpenCL
 - `cargo clippy --all-targets -- -D warnings` must pass
 - Kernel crates inherit workspace lints (`[lints] workspace = true`)
 - The workspace has `check-cfg` for `target_arch = "spirv"` to suppress clippy warnings on kernel crates
-- CI is build-only (no runtime execution until Ubuntu 26.04 runners have pocl with SPIR-V)
+- CI is build-only (no runtime execution until Ubuntu runners have pocl with SPIR-V)
 
 ## Known issues
 
-- `is_multiple_of(2)` crashes spirv-opt's `DeadBranchElimPass`. The compiled-tools path isolates this via fork() and falls back to safe optimization passes. Use `% 2 == 0` if using `use-installed-tools`.
-- CI cannot run kernels — Ubuntu 24.04's pocl lacks SPIR-V IL support.
-- Verified working on: pocl 6.0 (CPU), Intel Gen11 GPU, Intel CPU (pocl).
+- `is_multiple_of(2)` crashes spirv-opt's `DeadBranchElimPass`. The compiled-tools path isolates this via fork() and falls back to safe optimization passes.
+- pocl 7.0+ has a regression with multi-workgroup kernels using subgroup ops + subgroup builtins + shared memory (last workgroup gets wrong data). Works correctly on pocl 6.0 and Intel GPU.
+- Verified working on: pocl 6.0 (CPU), pocl 7.2-pre (CPU, with caveats above), Intel Gen11 GPU.
