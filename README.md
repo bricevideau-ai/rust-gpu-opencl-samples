@@ -28,6 +28,7 @@ cargo run -p runner --release
 cargo run -p runner --release -- collatz
 cargo run -p runner --release -- mandelbrot
 cargo run -p runner --release -- reduce
+cargo run -p runner --release -- debug-abort  # debug-printf abort strategy demo
 ```
 
 ## Project Structure

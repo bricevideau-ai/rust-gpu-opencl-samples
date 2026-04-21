@@ -62,6 +62,7 @@ cargo run -p runner --release                              # run all samples (ne
 cargo run -p runner --release -- collatz                   # run specific sample
 cargo run -p runner --release -- mandelbrot                # run specific sample
 cargo run -p runner --release -- reduce                    # run specific sample (OpenCL 2.0)
+cargo run -p runner --release -- debug-abort               # debug-printf abort strategy demo (not in default set)
 ```
 
 ## How to add a new sample

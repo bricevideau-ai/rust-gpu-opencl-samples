@@ -6,7 +6,7 @@ use opencl3::kernel::{ExecuteKernel, Kernel};
 use opencl3::memory::{Buffer, CL_MEM_READ_WRITE};
 use opencl3::program::Program;
 use opencl3::types::{CL_BLOCKING, cl_device_id};
-use spirv_builder::{Capability, CompileResult, SpirvBuilder};
+use spirv_builder::{Capability, CompileResult, ShaderPanicStrategy, SpirvBuilder};
 use std::path::Path;
 use std::ptr;
 use std::time::{Duration, Instant};
@@ -207,7 +207,12 @@ impl KernelArg for LocalBuffer {
 
 fn compile_kernel(path: &Path) -> Result<(Vec<u8>, Duration), Box<dyn std::error::Error>> {
     let start = Instant::now();
-    let result: CompileResult = SpirvBuilder::new(path, "spirv-unknown-opencl1.2").build()?;
+    let result: CompileResult = SpirvBuilder::new(path, "spirv-unknown-opencl1.2")
+        .shader_panic_strategy(ShaderPanicStrategy::DebugPrintfThenExit {
+            print_inputs: true,
+            print_backtrace: true,
+        })
+        .build()?;
     let spv_path = result.module.unwrap_single();
     let spv_bytes = std::fs::read(spv_path)?;
     Ok((spv_bytes, start.elapsed()))
@@ -215,8 +220,13 @@ fn compile_kernel(path: &Path) -> Result<(Vec<u8>, Duration), Box<dyn std::error
 
 fn compile_kernel_opencl2(path: &Path) -> Result<(Vec<u8>, Duration), Box<dyn std::error::Error>> {
     let start = Instant::now();
+    // Barrier-using kernels need unreachable: the debug-printf strategy's OpReturn
+    // can cause work item divergence at barriers, which is UB (PoCL #2156).
     let result: CompileResult = SpirvBuilder::new(path, "spirv-unknown-opencl2.0")
         .capability(Capability::Groups)
+        .shader_panic_strategy(
+            ShaderPanicStrategy::UNSOUND_DO_NOT_USE_UndefinedBehaviorViaUnreachable,
+        )
         .build()?;
     let spv_path = result.module.unwrap_single();
     let spv_bytes = std::fs::read(spv_path)?;
@@ -392,6 +402,48 @@ fn run_reduce(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn run_debug_abort(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n═══ Debug Abort (DebugPrintf strategy) ═══");
+    let kernel_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernels/collatz");
+    let (spv_bytes, compile_time) = compile_kernel(&kernel_crate)?;
+    println!("Compiled: {} bytes, {compile_time:?}", spv_bytes.len());
+    println!("Strategy: debug-printf (abort blocks → OpenCL printf + OpReturn)");
+
+    let program = ocl.build_program(&spv_bytes)?;
+    let kernel = Kernel::create(&program, "collatz_kernel")?;
+
+    // Allocate a buffer smaller than global_size. Out-of-bounds work items
+    // hit a bounds check → printf diagnostic + OpReturn (early exit).
+    let global_size = 128;
+    let buf_len = 64;
+    let mut data: Vec<u32> = (1..=buf_len as u32).collect();
+
+    let buf = ocl.upload(&data)?;
+    println!("Launching {global_size} work items with buffer length {buf_len}...");
+    let event = ocl.run(&kernel, &[global_size], None, &[&buf])?;
+    ocl.download(&buf, &mut data)?;
+
+    if let Some(d) = profiling_duration(&event) {
+        println!("Kernel:  {d:?}");
+    }
+
+    // Verify the in-bounds portion still computed correctly.
+    let checks: &[(u32, u32)] = &[(1, 0), (2, 1), (3, 7), (27, 111)];
+    let mut ok = true;
+    for &(input, expected) in checks {
+        let got = data[(input - 1) as usize];
+        if got != expected {
+            eprintln!("FAIL: collatz({input}) = {got}, expected {expected}");
+            ok = false;
+        }
+    }
+    if ok {
+        println!("Verify:  in-bounds elements computed correctly");
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ocl = OclContext::new()?;
 
@@ -400,6 +452,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("collatz") => run_collatz(&ocl)?,
         Some("mandelbrot") => run_mandelbrot(&ocl)?,
         Some("reduce") => run_reduce(&ocl)?,
+        Some("debug-abort") => run_debug_abort(&ocl)?,
         _ => {
             run_collatz(&ocl)?;
             run_mandelbrot(&ocl)?;
