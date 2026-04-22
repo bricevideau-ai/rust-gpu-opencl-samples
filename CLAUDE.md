@@ -13,6 +13,7 @@ kernels/
   collatz/      — Collatz conjecture kernel
   mandelbrot/   — Mandelbrot set with complex numbers (num-complex), uses printf
   reduce/       — Hierarchical reduction using subgroup ops + shared memory (OpenCL 2.0)
+  mandelbrot-image/ — Mandelbrot set rendered to an OpenCL 2D image (Full HD PPM output)
 runner/         — Host-side OpenCL runner with helpers
 ```
 
@@ -26,6 +27,15 @@ runner/         — Host-side OpenCL runner with helpers
 - Work item ID: `#[spirv(global_invocation_id)] id: USizeVec3`
 - Scalar args: just by value (`max_iter: u32`)
 - Struct args: by value, works for scalar-only structs (`vp: Viewport`)
+
+### Image kernels
+- Target `spirv-unknown-opencl1.2` — no explicit capability needed; codegen auto-adds `ImageBasic` when it sees an Image kernel parameter (OpenCL 1.2 supports separate read_only / write_only image kernel args; the same image object can be read in one kernel and written by another)
+- For read+write of the same image in a single kernel, use `spirv-unknown-opencl2.0` and explicitly add `.capability(Capability::ImageReadWrite)` (the codegen can't infer this — it changes WriteOnly to ReadWrite)
+- `image: &Image!(2D, type=u32, sampled=false)` → AccessQualifier::ReadOnly
+- `image: &mut Image!(2D, type=f32, sampled=false)` → AccessQualifier::WriteOnly on 1.2, AccessQualifier::ReadWrite when ImageReadWrite is enabled
+- `unsafe { image.write(coord, color) }` / `unsafe { image.read(coord) }` for image I/O
+- Host-side: `opencl3::memory::Image::create()` with `cl_image_format` and `cl_image_desc`; pass the image via `image.get()` (returns `cl_mem`) when calling `set_arg`, not `&image`
+- Check `device.image_support()` before running image kernels
 
 ### OpenCL 2.0 / subgroup kernels
 - Target `spirv-unknown-opencl2.0` with `.capability(Capability::Groups)` in SpirvBuilder
@@ -62,6 +72,7 @@ cargo run -p runner --release                              # run all samples (ne
 cargo run -p runner --release -- collatz                   # run specific sample
 cargo run -p runner --release -- mandelbrot                # run specific sample
 cargo run -p runner --release -- reduce                    # run specific sample (OpenCL 2.0)
+cargo run -p runner --release -- mandelbrot-image          # run specific sample (needs image support)
 cargo run -p runner --release -- debug-abort               # debug-printf abort strategy demo (not in default set)
 ```
 

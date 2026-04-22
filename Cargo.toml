@@ -4,6 +4,7 @@ members = [
     "kernels/collatz",
     "kernels/mandelbrot",
     "kernels/reduce",
+    "kernels/mandelbrot-image",
     "runner",
 ]
 
