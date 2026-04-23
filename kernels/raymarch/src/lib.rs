@@ -93,11 +93,7 @@ fn sky(rd: Vec3) -> Vec3 {
     let h = ocl::smoothstep(-0.05, 0.45, rd.y);
     let zenith = Vec3::new(0.30, 0.55, 0.85);
     let band = Vec3::new(0.85, 0.78, 0.62);
-    Vec3::new(
-        ocl::mix(band.x, zenith.x, h),
-        ocl::mix(band.y, zenith.y, h),
-        ocl::mix(band.z, zenith.z, h),
-    )
+    ocl::mix(band, zenith, Vec3::splat(h))
 }
 
 fn shade(p: Vec3, n: Vec3, ro: Vec3, sun: Vec3, sun_color: Vec3, base: Vec3) -> Vec3 {
@@ -170,25 +166,13 @@ pub fn raymarch(
         let surf = shade(p, n, ro, sun, sun_color, base);
         // Distance fog: blend toward sky as t grows.
         let fog = ocl::exp(-t * 0.06);
-        let s = sky(rd);
-        Vec3::new(
-            ocl::mix(s.x, surf.x, fog),
-            ocl::mix(s.y, surf.y, fog),
-            ocl::mix(s.z, surf.z, fog),
-        )
+        ocl::mix(sky(rd), surf, Vec3::splat(fog))
     } else {
         sky(rd)
     };
 
-    let r = ocl::clamp(color.x, 0.0, 1.0);
-    let g = ocl::clamp(color.y, 0.0, 1.0);
-    let b = ocl::clamp(color.z, 0.0, 1.0);
-    let out = UVec4::new(
-        (r * 255.0) as u32,
-        (g * 255.0) as u32,
-        (b * 255.0) as u32,
-        255,
-    );
+    let rgb = ocl::clamp(color, Vec3::ZERO, Vec3::ONE) * 255.0;
+    let out = UVec4::new(rgb.x as u32, rgb.y as u32, rgb.z as u32, 255);
 
     let coord = IVec2::new(px as i32, py as i32);
     unsafe {
