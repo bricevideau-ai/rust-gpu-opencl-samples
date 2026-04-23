@@ -1,6 +1,6 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 
-use glam::{IVec2, USizeVec3, UVec4, Vec3};
+use glam::{IVec2, USizeVec3, Vec3};
 use spirv_std::arch::opencl_std as ocl;
 use spirv_std::{Image, glam, spirv};
 
@@ -23,11 +23,7 @@ fn normalize(v: Vec3) -> Vec3 {
 }
 
 fn ray_at(ro: Vec3, rd: Vec3, t: f32) -> Vec3 {
-    Vec3::new(
-        ocl::fma(rd.x, t, ro.x),
-        ocl::fma(rd.y, t, ro.y),
-        ocl::fma(rd.z, t, ro.z),
-    )
+    ocl::fma(rd, Vec3::splat(t), ro)
 }
 
 // Polynomial smooth-min — blends two SDFs over a radius `k`.
@@ -45,10 +41,12 @@ fn scene_sdf(p: Vec3) -> f32 {
 }
 
 fn scene_normal(p: Vec3) -> Vec3 {
-    let e = 0.001;
-    let dx = scene_sdf(Vec3::new(p.x + e, p.y, p.z)) - scene_sdf(Vec3::new(p.x - e, p.y, p.z));
-    let dy = scene_sdf(Vec3::new(p.x, p.y + e, p.z)) - scene_sdf(Vec3::new(p.x, p.y - e, p.z));
-    let dz = scene_sdf(Vec3::new(p.x, p.y, p.z + e)) - scene_sdf(Vec3::new(p.x, p.y, p.z - e));
+    let ex = Vec3::new(0.001, 0.0, 0.0);
+    let ey = Vec3::new(0.0, 0.001, 0.0);
+    let ez = Vec3::new(0.0, 0.0, 0.001);
+    let dx = scene_sdf(p + ex) - scene_sdf(p - ex);
+    let dy = scene_sdf(p + ey) - scene_sdf(p - ey);
+    let dz = scene_sdf(p + ez) - scene_sdf(p - ez);
     normalize(Vec3::new(dx, dy, dz))
 }
 
@@ -107,11 +105,7 @@ fn shade(p: Vec3, n: Vec3, ro: Vec3, sun: Vec3, sun_color: Vec3, base: Vec3) -> 
 
     let amb = 0.15;
     let diff = 0.7 * ndotl * shadow;
-    Vec3::new(
-        base.x * (amb + diff * sun_color.x) + spec * sun_color.x,
-        base.y * (amb + diff * sun_color.y) + spec * sun_color.y,
-        base.z * (amb + diff * sun_color.z) + spec * sun_color.z,
-    )
+    base * (sun_color * diff + Vec3::splat(amb)) + sun_color * spec
 }
 
 #[spirv(kernel)]
@@ -171,8 +165,9 @@ pub fn raymarch(
         sky(rd)
     };
 
-    let rgb = ocl::clamp(color, Vec3::ZERO, Vec3::ONE) * 255.0;
-    let out = UVec4::new(rgb.x as u32, rgb.y as u32, rgb.z as u32, 255);
+    let out = (ocl::clamp(color, Vec3::ZERO, Vec3::ONE) * 255.0)
+        .as_uvec3()
+        .extend(255);
 
     let coord = IVec2::new(px as i32, py as i32);
     unsafe {
