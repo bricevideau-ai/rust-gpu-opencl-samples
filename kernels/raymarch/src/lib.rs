@@ -14,25 +14,12 @@ const MAX_STEPS: u32 = 96;
 const MAX_DIST: f32 = 30.0;
 const SURF_EPS: f32 = 0.001;
 
-fn dot3(a: Vec3, b: Vec3) -> f32 {
-    a.x * b.x + a.y * b.y + a.z * b.z
-}
-
 fn length(v: Vec3) -> f32 {
-    ocl::sqrt(dot3(v, v))
+    ocl::sqrt(v.dot(v))
 }
 
 fn normalize(v: Vec3) -> Vec3 {
-    let inv = ocl::rsqrt(dot3(v, v));
-    Vec3::new(v.x * inv, v.y * inv, v.z * inv)
-}
-
-fn cross(a: Vec3, b: Vec3) -> Vec3 {
-    Vec3::new(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    )
+    v * ocl::rsqrt(v.dot(v))
 }
 
 fn ray_at(ro: Vec3, rd: Vec3, t: f32) -> Vec3 {
@@ -50,16 +37,8 @@ fn smin(a: f32, b: f32, k: f32) -> f32 {
 }
 
 fn scene_sdf(p: Vec3) -> f32 {
-    let d_a = length(Vec3::new(
-        p.x - SPHERE_A.x,
-        p.y - SPHERE_A.y,
-        p.z - SPHERE_A.z,
-    )) - RADIUS_A;
-    let d_b = length(Vec3::new(
-        p.x - SPHERE_B.x,
-        p.y - SPHERE_B.y,
-        p.z - SPHERE_B.z,
-    )) - RADIUS_B;
+    let d_a = length(p - SPHERE_A) - RADIUS_A;
+    let d_b = length(p - SPHERE_B) - RADIUS_B;
     let blob = smin(d_a, d_b, 0.45);
     let plane = p.y - GROUND_Y;
     ocl::fmin(blob, plane)
@@ -122,18 +101,13 @@ fn sky(rd: Vec3) -> Vec3 {
 }
 
 fn shade(p: Vec3, n: Vec3, ro: Vec3, sun: Vec3, sun_color: Vec3, base: Vec3) -> Vec3 {
-    let view = normalize(Vec3::new(ro.x - p.x, ro.y - p.y, ro.z - p.z));
-    let ndotl = ocl::clamp(dot3(n, sun), 0.0, 1.0);
+    let view = normalize(ro - p);
+    let ndotl = ocl::clamp(n.dot(sun), 0.0, 1.0);
     let shadow = soft_shadow(p, sun, 8.0);
 
     // Phong specular: reflect view about normal, dot with sun, raise to power.
-    let v_dot_n = dot3(view, n);
-    let refl = Vec3::new(
-        2.0 * v_dot_n * n.x - view.x,
-        2.0 * v_dot_n * n.y - view.y,
-        2.0 * v_dot_n * n.z - view.z,
-    );
-    let spec = ocl::pow(ocl::clamp(dot3(refl, sun), 0.0, 1.0), 32.0) * shadow;
+    let refl = n * (2.0 * view.dot(n)) - view;
+    let spec = ocl::pow(ocl::clamp(refl.dot(sun), 0.0, 1.0), 32.0) * shadow;
 
     let amb = 0.15;
     let diff = 0.7 * ndotl * shadow;
@@ -166,16 +140,12 @@ pub fn raymarch(
     let ro = Vec3::new(3.0, 1.6, 4.0);
     let target = Vec3::new(0.0, 0.0, 0.0);
     let world_up = Vec3::new(0.0, 1.0, 0.0);
-    let forward = normalize(Vec3::new(target.x - ro.x, target.y - ro.y, target.z - ro.z));
-    let right = normalize(cross(forward, world_up));
-    let cam_up = cross(right, forward);
+    let forward = normalize(target - ro);
+    let right = normalize(forward.cross(world_up));
+    let cam_up = right.cross(forward);
 
     let fov_scale = 0.7;
-    let rd = normalize(Vec3::new(
-        forward.x + u * fov_scale * right.x + v * fov_scale * cam_up.x,
-        forward.y + u * fov_scale * right.y + v * fov_scale * cam_up.y,
-        forward.z + u * fov_scale * right.z + v * fov_scale * cam_up.z,
-    ));
+    let rd = normalize(forward + (right * (u * fov_scale)) + (cam_up * (v * fov_scale)));
 
     // Sun direction from spherical coords (azimuth, elevation).
     let sun_az = 0.7f32;
