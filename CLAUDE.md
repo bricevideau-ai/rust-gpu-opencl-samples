@@ -14,6 +14,7 @@ kernels/
   mandelbrot/   — Mandelbrot set with complex numbers (num-complex), uses printf
   reduce/       — Hierarchical reduction using subgroup ops + shared memory (OpenCL 2.0)
   mandelbrot-image/ — Mandelbrot set rendered to an OpenCL 2D image (Full HD PPM output)
+  raymarch/     — SDF ray marcher exercising spirv_std::arch::opencl_std math intrinsics
 runner/         — Host-side OpenCL runner with helpers
 ```
 
@@ -73,6 +74,7 @@ cargo run -p runner --release -- collatz                   # run specific sample
 cargo run -p runner --release -- mandelbrot                # run specific sample
 cargo run -p runner --release -- reduce                    # run specific sample (OpenCL 2.0)
 cargo run -p runner --release -- mandelbrot-image          # run specific sample (needs image support)
+cargo run -p runner --release -- raymarch                  # run specific sample (needs image support; pocl 7.x recommended)
 cargo run -p runner --release -- debug-abort               # debug-printf abort strategy demo (not in default set)
 ```
 
@@ -97,4 +99,5 @@ cargo run -p runner --release -- debug-abort               # debug-printf abort 
 
 - `is_multiple_of(2)` crashes spirv-opt's `DeadBranchElimPass`. The compiled-tools path isolates this via fork() and falls back to safe optimization passes.
 - pocl 7.0+ has a regression with multi-workgroup kernels using subgroup ops + subgroup builtins + shared memory (last workgroup gets wrong data). Works correctly on pocl 6.0 and Intel GPU.
+- The `raymarch` sample crashes pocl 6.0 with `LLVM ERROR: Instruction Combining did not reach a fixpoint after 1 iterations` — a known pocl 6.0 limitation hit by complex kernels using OpenCL.std math intrinsics. Works on pocl 7.2-pre and Intel GPU.
 - Verified working on: pocl 6.0 (CPU), pocl 7.2-pre (CPU, with caveats above), Intel Gen11 GPU.

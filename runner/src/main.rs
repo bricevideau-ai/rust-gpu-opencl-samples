@@ -4,8 +4,8 @@ use opencl3::device::{CL_DEVICE_TYPE_ALL, Device, get_all_devices};
 use opencl3::event::Event;
 use opencl3::kernel::{ExecuteKernel, Kernel};
 use opencl3::memory::{
-    Buffer, CL_MEM_OBJECT_IMAGE2D, CL_MEM_READ_WRITE, CL_MEM_WRITE_ONLY, CL_RGBA,
-    CL_UNSIGNED_INT8, ClMem, Image,
+    Buffer, CL_MEM_OBJECT_IMAGE2D, CL_MEM_READ_WRITE, CL_MEM_WRITE_ONLY, CL_RGBA, CL_UNSIGNED_INT8,
+    ClMem, Image,
 };
 use opencl3::program::Program;
 use opencl3::types::{CL_BLOCKING, cl_device_id, cl_image_desc, cl_image_format};
@@ -465,8 +465,7 @@ fn run_mandelbrot_image(ocl: &OclContext) -> Result<(), Box<dyn std::error::Erro
         return Ok(());
     }
 
-    let kernel_crate =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernels/mandelbrot-image");
+    let kernel_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernels/mandelbrot-image");
     let (spv_bytes, compile_time) = compile_kernel_image(&kernel_crate)?;
     println!("Compiled: {} bytes, {compile_time:?}", spv_bytes.len());
 
@@ -494,8 +493,15 @@ fn run_mandelbrot_image(ocl: &OclContext) -> Result<(), Box<dyn std::error::Erro
         buffer: ptr::null_mut(),
     };
 
-    let image =
-        unsafe { Image::create(&ocl.context, CL_MEM_WRITE_ONLY, &format, &desc, ptr::null_mut())? };
+    let image = unsafe {
+        Image::create(
+            &ocl.context,
+            CL_MEM_WRITE_ONLY,
+            &format,
+            &desc,
+            ptr::null_mut(),
+        )?
+    };
 
     let mut exec = ExecuteKernel::new(&kernel);
     let cl_mem_handle = image.get();
@@ -543,7 +549,110 @@ fn run_mandelbrot_image(ocl: &OclContext) -> Result<(), Box<dyn std::error::Erro
         ppm.push(chunk[2]);
     }
     std::fs::write(ppm_path, &ppm)?;
-    println!("Output:  {ppm_path} ({width}x{height}, {} bytes)", ppm.len());
+    println!(
+        "Output:  {ppm_path} ({width}x{height}, {} bytes)",
+        ppm.len()
+    );
+
+    Ok(())
+}
+
+fn run_raymarch(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n═══ Ray-marched SDF ═══");
+
+    let device = Device::new(ocl.device_id);
+    let has_images = device.image_support().unwrap_or(false);
+    if !has_images {
+        println!("Skipped: device does not support images");
+        return Ok(());
+    }
+
+    let kernel_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernels/raymarch");
+    let (spv_bytes, compile_time) = compile_kernel_image(&kernel_crate)?;
+    println!("Compiled: {} bytes, {compile_time:?}", spv_bytes.len());
+
+    let program = ocl.build_program(&spv_bytes)?;
+    let kernel = Kernel::create(&program, "raymarch")?;
+
+    let width: u32 = 1280;
+    let height: u32 = 720;
+
+    let format = cl_image_format {
+        image_channel_order: CL_RGBA,
+        image_channel_data_type: CL_UNSIGNED_INT8,
+    };
+    let desc = cl_image_desc {
+        image_type: CL_MEM_OBJECT_IMAGE2D,
+        image_width: width as usize,
+        image_height: height as usize,
+        image_depth: 0,
+        image_array_size: 0,
+        image_row_pitch: 0,
+        image_slice_pitch: 0,
+        num_mip_levels: 0,
+        num_samples: 0,
+        buffer: ptr::null_mut(),
+    };
+
+    let image = unsafe {
+        Image::create(
+            &ocl.context,
+            CL_MEM_WRITE_ONLY,
+            &format,
+            &desc,
+            ptr::null_mut(),
+        )?
+    };
+
+    let mut exec = ExecuteKernel::new(&kernel);
+    let cl_mem_handle = image.get();
+    unsafe {
+        exec.set_arg(&cl_mem_handle)
+            .set_arg(&width)
+            .set_arg(&height);
+    }
+    let event = unsafe {
+        exec.set_global_work_sizes(&[width as usize, height as usize])
+            .enqueue_nd_range(&ocl.queue)?
+    };
+    event.wait()?;
+
+    if let Some(d) = profiling_duration(&event) {
+        println!("Kernel:  {d:?} ({width}x{height})");
+    }
+
+    let pixel_count = (width * height) as usize;
+    let mut pixels = vec![0u8; pixel_count * 4];
+    let origin = [0usize, 0, 0];
+    let region = [width as usize, height as usize, 1];
+    unsafe {
+        ocl.queue
+            .enqueue_read_image(
+                &image,
+                CL_BLOCKING,
+                origin.as_ptr(),
+                region.as_ptr(),
+                0,
+                0,
+                pixels.as_mut_ptr().cast(),
+                &[],
+            )?
+            .wait()?;
+    }
+
+    let ppm_path = "raymarch.ppm";
+    let mut ppm = Vec::with_capacity(pixel_count * 3 + 64);
+    ppm.extend_from_slice(format!("P6\n{width} {height}\n255\n").as_bytes());
+    for chunk in pixels.chunks_exact(4) {
+        ppm.push(chunk[0]);
+        ppm.push(chunk[1]);
+        ppm.push(chunk[2]);
+    }
+    std::fs::write(ppm_path, &ppm)?;
+    println!(
+        "Output:  {ppm_path} ({width}x{height}, {} bytes)",
+        ppm.len()
+    );
 
     Ok(())
 }
@@ -558,11 +667,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("reduce") => run_reduce(&ocl)?,
         Some("debug-abort") => run_debug_abort(&ocl)?,
         Some("mandelbrot-image") => run_mandelbrot_image(&ocl)?,
+        Some("raymarch") => run_raymarch(&ocl)?,
         _ => {
             run_collatz(&ocl)?;
             run_mandelbrot(&ocl)?;
             run_reduce(&ocl)?;
             run_mandelbrot_image(&ocl)?;
+            run_raymarch(&ocl)?;
         }
     }
 
