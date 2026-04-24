@@ -14,14 +14,6 @@ const MAX_STEPS: u32 = 96;
 const MAX_DIST: f32 = 30.0;
 const SURF_EPS: f32 = 0.001;
 
-fn length(v: Vec3) -> f32 {
-    ocl::sqrt(v.dot(v))
-}
-
-fn normalize(v: Vec3) -> Vec3 {
-    v * ocl::rsqrt(v.dot(v))
-}
-
 fn ray_at(ro: Vec3, rd: Vec3, t: f32) -> Vec3 {
     ocl::fma(rd, Vec3::splat(t), ro)
 }
@@ -33,8 +25,8 @@ fn smin(a: f32, b: f32, k: f32) -> f32 {
 }
 
 fn scene_sdf(p: Vec3) -> f32 {
-    let d_a = length(p - SPHERE_A) - RADIUS_A;
-    let d_b = length(p - SPHERE_B) - RADIUS_B;
+    let d_a = ocl::distance(p, SPHERE_A) - RADIUS_A;
+    let d_b = ocl::distance(p, SPHERE_B) - RADIUS_B;
     let blob = smin(d_a, d_b, 0.45);
     let plane = p.y - GROUND_Y;
     ocl::fmin(blob, plane)
@@ -47,7 +39,7 @@ fn scene_normal(p: Vec3) -> Vec3 {
     let dx = scene_sdf(p + ex) - scene_sdf(p - ex);
     let dy = scene_sdf(p + ey) - scene_sdf(p - ey);
     let dz = scene_sdf(p + ez) - scene_sdf(p - ez);
-    normalize(Vec3::new(dx, dy, dz))
+    ocl::normalize(Vec3::new(dx, dy, dz))
 }
 
 fn march(ro: Vec3, rd: Vec3) -> (bool, f32) {
@@ -95,7 +87,7 @@ fn sky(rd: Vec3) -> Vec3 {
 }
 
 fn shade(p: Vec3, n: Vec3, ro: Vec3, sun: Vec3, sun_color: Vec3, base: Vec3) -> Vec3 {
-    let view = normalize(ro - p);
+    let view = ocl::normalize(ro - p);
     let ndotl = ocl::clamp(n.dot(sun), 0.0, 1.0);
     let shadow = soft_shadow(p, sun, 8.0);
 
@@ -130,17 +122,17 @@ pub fn raymarch(
     let ro = Vec3::new(3.0, 1.6, 4.0);
     let target = Vec3::new(0.0, 0.0, 0.0);
     let world_up = Vec3::new(0.0, 1.0, 0.0);
-    let forward = normalize(target - ro);
-    let right = normalize(forward.cross(world_up));
+    let forward = ocl::normalize(target - ro);
+    let right = ocl::normalize(forward.cross(world_up));
     let cam_up = right.cross(forward);
 
     let fov_scale = 0.7;
-    let rd = normalize(forward + (right * (u * fov_scale)) + (cam_up * (v * fov_scale)));
+    let rd = ocl::normalize(forward + (right * (u * fov_scale)) + (cam_up * (v * fov_scale)));
 
     // Sun direction from spherical coords (azimuth, elevation).
     let sun_az = 0.7f32;
     let sun_el = 0.6f32;
-    let sun = normalize(Vec3::new(
+    let sun = ocl::normalize(Vec3::new(
         ocl::cos(sun_el) * ocl::sin(sun_az),
         ocl::sin(sun_el),
         ocl::cos(sun_el) * ocl::cos(sun_az),
