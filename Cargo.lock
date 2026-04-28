@@ -55,6 +55,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "bit-set"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34ddef2995421ab6a5c779542c81ee77c115206f4ad9d5a8e05f4ff49716a3dd"
+dependencies = [
+ "bit-vec",
+]
+
+[[package]]
+name = "bit-vec"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -157,6 +172,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "cfg_aliases"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+
+[[package]]
 name = "cl3"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -166,6 +187,15 @@ dependencies = [
  "libc",
  "opencl-sys",
  "thiserror",
+]
+
+[[package]]
+name = "codespan-reporting"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
+dependencies = [
+ "unicode-width",
 ]
 
 [[package]]
@@ -190,6 +220,12 @@ checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "crunchy"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "derive_more"
@@ -294,6 +330,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "fixedbitset"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
+
+[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -308,6 +350,12 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "form_urlencoded"
@@ -351,6 +399,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "half"
+version = "2.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
+dependencies = [
+ "cfg-if",
+ "crunchy",
+ "num-traits",
+ "zerocopy",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -358,7 +418,16 @@ checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash",
+ "foldhash 0.1.5",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "foldhash 0.2.0",
 ]
 
 [[package]]
@@ -366,6 +435,12 @@ name = "hashbrown"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+
+[[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "icu_collections"
@@ -605,6 +680,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "naga"
+version = "29.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa2630921705b9b01dcdd0b6864b9562ca3c1951eecd0f0c4f5f04f61e412647"
+dependencies = [
+ "arrayvec",
+ "bit-set",
+ "bitflags 2.11.1",
+ "cfg-if",
+ "cfg_aliases",
+ "codespan-reporting",
+ "half",
+ "hashbrown 0.16.1",
+ "indexmap",
+ "libm",
+ "log",
+ "num-traits",
+ "once_cell",
+ "petgraph",
+ "rustc-hash",
+ "spirv 0.4.0+sdk-1.4.341.0",
+ "thiserror",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -698,6 +798,17 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "petgraph"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
+dependencies = [
+ "fixedbitset",
+ "hashbrown 0.15.5",
+ "indexmap",
+]
 
 [[package]]
 name = "pin-project-lite"
@@ -796,7 +907,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cf3a93856b6e5946537278df0d3075596371b1950ccff012f02b0f7eafec8d"
 dependencies = [
  "rustc-hash",
- "spirv",
+ "spirv 0.3.0+sdk-1.3.268.0",
 ]
 
 [[package]]
@@ -821,8 +932,8 @@ checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustc_codegen_spirv"
-version = "0.9.0"
-source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#8198fd8d49aaa37c7477ba4e5571d114b18df3f6"
+version = "0.10.0-alpha.1"
+source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#aeeaabba320df186e5e4fb69fbe5862cd522ab36"
 dependencies = [
  "ahash",
  "ar",
@@ -833,6 +944,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
+ "naga",
  "object 0.37.3",
  "regex",
  "rspirv",
@@ -844,6 +956,7 @@ dependencies = [
  "spirt",
  "spirv-std-types",
  "spirv-tools",
+ "strum",
  "thorin-dwp",
  "tracing",
  "tracing-subscriber",
@@ -852,14 +965,14 @@ dependencies = [
 
 [[package]]
 name = "rustc_codegen_spirv-types"
-version = "0.9.0"
-source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#8198fd8d49aaa37c7477ba4e5571d114b18df3f6"
+version = "0.10.0-alpha.1"
+source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#aeeaabba320df186e5e4fb69fbe5862cd522ab36"
 dependencies = [
  "rspirv",
  "semver",
  "serde",
  "serde_json",
- "spirv",
+ "spirv 0.3.0+sdk-1.3.268.0",
  "thiserror",
 ]
 
@@ -1049,9 +1162,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spirv"
+version = "0.4.0+sdk-1.4.341.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9571ea910ebd84c86af4b3ed27f9dbdc6ad06f17c5f96146b2b671e2976744f"
+dependencies = [
+ "bitflags 2.11.1",
+]
+
+[[package]]
 name = "spirv-builder"
-version = "0.9.0"
-source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#8198fd8d49aaa37c7477ba4e5571d114b18df3f6"
+version = "0.10.0-alpha.1"
+source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#aeeaabba320df186e5e4fb69fbe5862cd522ab36"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1067,8 +1189,8 @@ dependencies = [
 
 [[package]]
 name = "spirv-std"
-version = "0.9.0"
-source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#8198fd8d49aaa37c7477ba4e5571d114b18df3f6"
+version = "0.10.0-alpha.1"
+source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#aeeaabba320df186e5e4fb69fbe5862cd522ab36"
 dependencies = [
  "bitflags 1.3.2",
  "glam",
@@ -1080,8 +1202,8 @@ dependencies = [
 
 [[package]]
 name = "spirv-std-macros"
-version = "0.9.0"
-source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#8198fd8d49aaa37c7477ba4e5571d114b18df3f6"
+version = "0.10.0-alpha.1"
+source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#aeeaabba320df186e5e4fb69fbe5862cd522ab36"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1091,8 +1213,8 @@ dependencies = [
 
 [[package]]
 name = "spirv-std-types"
-version = "0.9.0"
-source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#8198fd8d49aaa37c7477ba4e5571d114b18df3f6"
+version = "0.10.0-alpha.1"
+source = "git+https://github.com/bricevideau-ai/rust-gpu.git?branch=opencl-kernel-support#aeeaabba320df186e5e4fb69fbe5862cd522ab36"
 
 [[package]]
 name = "spirv-tools"
@@ -1123,6 +1245,27 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "syn"
@@ -1345,6 +1488,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-width"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "unicode-xid"
