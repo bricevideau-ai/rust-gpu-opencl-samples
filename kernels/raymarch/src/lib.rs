@@ -67,18 +67,20 @@ const COLOR_GROUND: Float3 = Float3::new(0.55, 0.55, 0.60);
 const COLOR_BLOB: Float3 = Float3::new(0.85, 0.55, 0.40);
 
 fn ray_at(ro: Float3, rd: Float3, t: f32) -> Float3 {
-    ocl::fma(rd, Float3::splat(t), ro)
+    rd.mul_add(Float3::splat(t), ro)
 }
 
-// Polynomial smooth-min — blends two SDFs over a radius `k`.
+// Polynomial smooth-min — blends two SDFs over a radius `k`. All scalar
+// math, so the `ocl::*` free-function entry points are used (the
+// glam-style methods on `cl::*` vector types don't apply to bare `f32`).
 fn smin(a: f32, b: f32, k: f32) -> f32 {
     let h = ocl::clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
     ocl::mix(b, a, h) - k * h * (1.0 - h)
 }
 
 fn scene_sdf(p: Float3) -> f32 {
-    let d_a = ocl::distance(p, SPHERE_A) - RADIUS_A;
-    let d_b = ocl::distance(p, SPHERE_B) - RADIUS_B;
+    let d_a = p.distance(SPHERE_A) - RADIUS_A;
+    let d_b = p.distance(SPHERE_B) - RADIUS_B;
     let blob = smin(d_a, d_b, SMIN_K);
     let plane = p.y() - GROUND_Y;
     ocl::fmin(blob, plane)
@@ -91,7 +93,7 @@ fn scene_normal(p: Float3) -> Float3 {
     let dx = scene_sdf(p + ex) - scene_sdf(p - ex);
     let dy = scene_sdf(p + ey) - scene_sdf(p - ey);
     let dz = scene_sdf(p + ez) - scene_sdf(p - ez);
-    ocl::normalize(Float3::new(dx, dy, dz))
+    Float3::new(dx, dy, dz).normalize()
 }
 
 fn march(ro: Float3, rd: Float3) -> (bool, f32) {
@@ -133,17 +135,17 @@ fn soft_shadow(ro: Float3, rd: Float3) -> f32 {
 
 fn sky(rd: Float3) -> Float3 {
     let h = ocl::smoothstep(SKY_HORIZON_LO, SKY_HORIZON_HI, rd.y());
-    ocl::mix(SKY_BAND, SKY_ZENITH, Float3::splat(h))
+    SKY_BAND.lerp(SKY_ZENITH, h)
 }
 
 fn shade(p: Float3, n: Float3, ro: Float3, sun: Float3, base: Float3) -> Float3 {
-    let view = ocl::normalize(ro - p);
-    let ndotl = ocl::clamp(ocl::dot(n, sun), 0.0, 1.0);
+    let view = (ro - p).normalize();
+    let ndotl = ocl::clamp(n.dot(sun), 0.0, 1.0);
     let shadow = soft_shadow(p, sun);
 
     // Phong specular: reflect view about normal, dot with sun, raise to power.
-    let refl = n * (2.0 * ocl::dot(view, n)) - view;
-    let spec = ocl::pow(ocl::clamp(ocl::dot(refl, sun), 0.0, 1.0), SPECULAR_POWER) * shadow;
+    let refl = n * (2.0 * view.dot(n)) - view;
+    let spec = ocl::pow(ocl::clamp(refl.dot(sun), 0.0, 1.0), SPECULAR_POWER) * shadow;
 
     let diff = DIFFUSE * ndotl * shadow;
     base * (SUN_COLOR * diff + Float3::splat(AMBIENT)) + SUN_COLOR * spec
@@ -153,17 +155,18 @@ fn shade(p: Float3, n: Float3, ro: Float3, sun: Float3, base: Float3) -> Float3 
 /// so the host smoke test can call it with the same code path.
 pub fn pixel_color(u: f32, v: f32) -> Float3 {
     // Camera basis.
-    let forward = ocl::normalize(CAM_TARGET - CAM_RO);
-    let right = ocl::normalize(ocl::cross(forward, CAM_WORLD_UP));
-    let cam_up = ocl::cross(right, forward);
-    let rd = ocl::normalize(forward + (right * (u * FOV_SCALE)) + (cam_up * (v * FOV_SCALE)));
+    let forward = (CAM_TARGET - CAM_RO).normalize();
+    let right = forward.cross(CAM_WORLD_UP).normalize();
+    let cam_up = right.cross(forward);
+    let rd = (forward + (right * (u * FOV_SCALE)) + (cam_up * (v * FOV_SCALE))).normalize();
 
     // Sun direction from spherical coords (azimuth, elevation).
-    let sun = ocl::normalize(Float3::new(
+    let sun = Float3::new(
         ocl::cos(SUN_EL) * ocl::sin(SUN_AZ),
         ocl::sin(SUN_EL),
         ocl::cos(SUN_EL) * ocl::cos(SUN_AZ),
-    ));
+    )
+    .normalize();
 
     let (hit, t) = march(CAM_RO, rd);
 
@@ -178,7 +181,7 @@ pub fn pixel_color(u: f32, v: f32) -> Float3 {
         let surf = shade(p, n, CAM_RO, sun, base);
         // Distance fog: blend toward sky as t grows.
         let fog = ocl::exp(-t * FOG_DENSITY);
-        ocl::mix(sky(rd), surf, Float3::splat(fog))
+        sky(rd).lerp(surf, fog)
     } else {
         sky(rd)
     }
@@ -207,7 +210,7 @@ pub fn raymarch(
     // Convert the saturated colour to per-channel u32 + alpha, then to
     // `glam::UVec4` for the image write — the storage-image `texels` arg
     // expects glam's vector type for the pixel format.
-    let rgb = (ocl::clamp(color, Float3::ZERO, Float3::ONE) * 255.0).as_uint3();
+    let rgb = (color.clamp(Float3::ZERO, Float3::ONE) * 255.0).as_uint3();
     let rgba = rgb.extend(255);
     let out = UVec4::from_array(rgba.to_array());
 
