@@ -1,15 +1,26 @@
+//! SDF ray marcher rendering two soft-min'd spheres above a ground plane,
+//! with sun lighting + soft shadows + distance fog. Written entirely in
+//! `spirv_std::cl::Float3` so every per-pixel operation is guaranteed to
+//! lower to the native `OpTypeVector` / `OpDot` / `OpExtInst` codegen path
+//! — no per-component scalarisation through `glam`'s scalar fallback.
+//!
+//! Same code runs on host (via the `Componentwise` host arms in
+//! `opencl_std::*`) so the `runner` crate ships a one-pixel host smoke
+//! test that asserts the shader's output matches the GPU bit-for-bit.
+
 #![cfg_attr(target_arch = "spirv", no_std)]
 
-use glam::{IVec2, USizeVec3, Vec3};
+use glam::{USizeVec3, UVec4};
 use spirv_std::arch::opencl_std as ocl;
+use spirv_std::cl::{Float3, Int2};
 use spirv_std::{Image, glam, spirv};
 
 // ── Numeric tolerances ─────────────────────────────────────────
 const EPSILON: f32 = 0.001; // small-distance tolerance reused throughout
 
 // ── Scene ──────────────────────────────────────────────────────
-const SPHERE_A: Vec3 = Vec3::new(-0.7, 0.0, 0.0);
-const SPHERE_B: Vec3 = Vec3::new(0.6, -0.2, 0.0);
+const SPHERE_A: Float3 = Float3::new(-0.7, 0.0, 0.0);
+const SPHERE_B: Float3 = Float3::new(0.6, -0.2, 0.0);
 const RADIUS_A: f32 = 0.9;
 const RADIUS_B: f32 = 0.7;
 const GROUND_Y: f32 = -0.9;
@@ -31,32 +42,32 @@ const SHADOW_STEP_MIN: f32 = 0.05; // clamp the per-step distance
 const SHADOW_STEP_MAX: f32 = 0.5;
 
 // ── Camera ─────────────────────────────────────────────────────
-const CAM_RO: Vec3 = Vec3::new(3.0, 1.6, 4.0);
-const CAM_TARGET: Vec3 = Vec3::ZERO;
-const CAM_WORLD_UP: Vec3 = Vec3::Y;
+const CAM_RO: Float3 = Float3::new(3.0, 1.6, 4.0);
+const CAM_TARGET: Float3 = Float3::ZERO;
+const CAM_WORLD_UP: Float3 = Float3::Y;
 const FOV_SCALE: f32 = 0.7;
 
 // ── Sun & shading ──────────────────────────────────────────────
 const SUN_AZ: f32 = 0.7;
 const SUN_EL: f32 = 0.6;
-const SUN_COLOR: Vec3 = Vec3::new(1.0, 0.95, 0.85);
+const SUN_COLOR: Float3 = Float3::new(1.0, 0.95, 0.85);
 const AMBIENT: f32 = 0.15;
 const DIFFUSE: f32 = 0.7;
 const SPECULAR_POWER: f32 = 32.0;
 const FOG_DENSITY: f32 = 0.06;
 
 // ── Sky gradient ───────────────────────────────────────────────
-const SKY_ZENITH: Vec3 = Vec3::new(0.30, 0.55, 0.85);
-const SKY_BAND: Vec3 = Vec3::new(0.85, 0.78, 0.62);
+const SKY_ZENITH: Float3 = Float3::new(0.30, 0.55, 0.85);
+const SKY_BAND: Float3 = Float3::new(0.85, 0.78, 0.62);
 const SKY_HORIZON_LO: f32 = -0.05;
 const SKY_HORIZON_HI: f32 = 0.45;
 
 // ── Surface palette ────────────────────────────────────────────
-const COLOR_GROUND: Vec3 = Vec3::new(0.55, 0.55, 0.60);
-const COLOR_BLOB: Vec3 = Vec3::new(0.85, 0.55, 0.40);
+const COLOR_GROUND: Float3 = Float3::new(0.55, 0.55, 0.60);
+const COLOR_BLOB: Float3 = Float3::new(0.85, 0.55, 0.40);
 
-fn ray_at(ro: Vec3, rd: Vec3, t: f32) -> Vec3 {
-    ocl::fma(rd, Vec3::splat(t), ro)
+fn ray_at(ro: Float3, rd: Float3, t: f32) -> Float3 {
+    ocl::fma(rd, Float3::splat(t), ro)
 }
 
 // Polynomial smooth-min — blends two SDFs over a radius `k`.
@@ -65,25 +76,25 @@ fn smin(a: f32, b: f32, k: f32) -> f32 {
     ocl::mix(b, a, h) - k * h * (1.0 - h)
 }
 
-fn scene_sdf(p: Vec3) -> f32 {
+fn scene_sdf(p: Float3) -> f32 {
     let d_a = ocl::distance(p, SPHERE_A) - RADIUS_A;
     let d_b = ocl::distance(p, SPHERE_B) - RADIUS_B;
     let blob = smin(d_a, d_b, SMIN_K);
-    let plane = p.y - GROUND_Y;
+    let plane = p.y() - GROUND_Y;
     ocl::fmin(blob, plane)
 }
 
-fn scene_normal(p: Vec3) -> Vec3 {
-    let ex = Vec3::new(EPSILON, 0.0, 0.0);
-    let ey = Vec3::new(0.0, EPSILON, 0.0);
-    let ez = Vec3::new(0.0, 0.0, EPSILON);
+fn scene_normal(p: Float3) -> Float3 {
+    let ex = Float3::new(EPSILON, 0.0, 0.0);
+    let ey = Float3::new(0.0, EPSILON, 0.0);
+    let ez = Float3::new(0.0, 0.0, EPSILON);
     let dx = scene_sdf(p + ex) - scene_sdf(p - ex);
     let dy = scene_sdf(p + ey) - scene_sdf(p - ey);
     let dz = scene_sdf(p + ez) - scene_sdf(p - ez);
-    ocl::normalize(Vec3::new(dx, dy, dz))
+    ocl::normalize(Float3::new(dx, dy, dz))
 }
 
-fn march(ro: Vec3, rd: Vec3) -> (bool, f32) {
+fn march(ro: Float3, rd: Float3) -> (bool, f32) {
     let mut t = 0.0f32;
     let mut i = 0u32;
     while i < MAX_STEPS {
@@ -101,7 +112,7 @@ fn march(ro: Vec3, rd: Vec3) -> (bool, f32) {
 }
 
 // Cone-marched soft shadow. `SHADOW_K` controls penumbra width.
-fn soft_shadow(ro: Vec3, rd: Vec3) -> f32 {
+fn soft_shadow(ro: Float3, rd: Float3) -> f32 {
     let mut t = SHADOW_T_START;
     let mut res = 1.0f32;
     let mut i = 0u32;
@@ -120,22 +131,57 @@ fn soft_shadow(ro: Vec3, rd: Vec3) -> f32 {
     ocl::clamp(res, 0.0, 1.0)
 }
 
-fn sky(rd: Vec3) -> Vec3 {
-    let h = ocl::smoothstep(SKY_HORIZON_LO, SKY_HORIZON_HI, rd.y);
-    ocl::mix(SKY_BAND, SKY_ZENITH, Vec3::splat(h))
+fn sky(rd: Float3) -> Float3 {
+    let h = ocl::smoothstep(SKY_HORIZON_LO, SKY_HORIZON_HI, rd.y());
+    ocl::mix(SKY_BAND, SKY_ZENITH, Float3::splat(h))
 }
 
-fn shade(p: Vec3, n: Vec3, ro: Vec3, sun: Vec3, base: Vec3) -> Vec3 {
+fn shade(p: Float3, n: Float3, ro: Float3, sun: Float3, base: Float3) -> Float3 {
     let view = ocl::normalize(ro - p);
-    let ndotl = ocl::clamp(n.dot(sun), 0.0, 1.0);
+    let ndotl = ocl::clamp(ocl::dot(n, sun), 0.0, 1.0);
     let shadow = soft_shadow(p, sun);
 
     // Phong specular: reflect view about normal, dot with sun, raise to power.
-    let refl = n * (2.0 * view.dot(n)) - view;
-    let spec = ocl::pow(ocl::clamp(refl.dot(sun), 0.0, 1.0), SPECULAR_POWER) * shadow;
+    let refl = n * (2.0 * ocl::dot(view, n)) - view;
+    let spec = ocl::pow(ocl::clamp(ocl::dot(refl, sun), 0.0, 1.0), SPECULAR_POWER) * shadow;
 
     let diff = DIFFUSE * ndotl * shadow;
-    base * (SUN_COLOR * diff + Vec3::splat(AMBIENT)) + SUN_COLOR * spec
+    base * (SUN_COLOR * diff + Float3::splat(AMBIENT)) + SUN_COLOR * spec
+}
+
+/// Computes the colour at a single pixel. Factored out of the kernel
+/// so the host smoke test can call it with the same code path.
+pub fn pixel_color(u: f32, v: f32) -> Float3 {
+    // Camera basis.
+    let forward = ocl::normalize(CAM_TARGET - CAM_RO);
+    let right = ocl::normalize(ocl::cross(forward, CAM_WORLD_UP));
+    let cam_up = ocl::cross(right, forward);
+    let rd = ocl::normalize(forward + (right * (u * FOV_SCALE)) + (cam_up * (v * FOV_SCALE)));
+
+    // Sun direction from spherical coords (azimuth, elevation).
+    let sun = ocl::normalize(Float3::new(
+        ocl::cos(SUN_EL) * ocl::sin(SUN_AZ),
+        ocl::sin(SUN_EL),
+        ocl::cos(SUN_EL) * ocl::cos(SUN_AZ),
+    ));
+
+    let (hit, t) = march(CAM_RO, rd);
+
+    if hit {
+        let p = ray_at(CAM_RO, rd, t);
+        let n = scene_normal(p);
+        let base = if p.y() < GROUND_Y + GROUND_BIAS {
+            COLOR_GROUND
+        } else {
+            COLOR_BLOB
+        };
+        let surf = shade(p, n, CAM_RO, sun, base);
+        // Distance fog: blend toward sky as t grows.
+        let fog = ocl::exp(-t * FOG_DENSITY);
+        ocl::mix(sky(rd), surf, Float3::splat(fog))
+    } else {
+        sky(rd)
+    }
 }
 
 #[spirv(kernel)]
@@ -156,42 +202,16 @@ pub fn raymarch(
     let u = (2.0 * (px as f32 + 0.5) / width as f32 - 1.0) * aspect;
     let v = 1.0 - 2.0 * (py as f32 + 0.5) / height as f32;
 
-    // Camera basis.
-    let forward = ocl::normalize(CAM_TARGET - CAM_RO);
-    let right = ocl::normalize(forward.cross(CAM_WORLD_UP));
-    let cam_up = right.cross(forward);
-    let rd = ocl::normalize(forward + (right * (u * FOV_SCALE)) + (cam_up * (v * FOV_SCALE)));
+    let color = pixel_color(u, v);
 
-    // Sun direction from spherical coords (azimuth, elevation).
-    let sun = ocl::normalize(Vec3::new(
-        ocl::cos(SUN_EL) * ocl::sin(SUN_AZ),
-        ocl::sin(SUN_EL),
-        ocl::cos(SUN_EL) * ocl::cos(SUN_AZ),
-    ));
+    // Convert the saturated colour to per-channel u32 + alpha, then to
+    // `glam::UVec4` for the image write — the storage-image `texels` arg
+    // expects glam's vector type for the pixel format.
+    let rgb = (ocl::clamp(color, Float3::ZERO, Float3::ONE) * 255.0).as_uint3();
+    let rgba = rgb.extend(255);
+    let out = UVec4::from_array(rgba.to_array());
 
-    let (hit, t) = march(CAM_RO, rd);
-
-    let color = if hit {
-        let p = ray_at(CAM_RO, rd, t);
-        let n = scene_normal(p);
-        let base = if p.y < GROUND_Y + GROUND_BIAS {
-            COLOR_GROUND
-        } else {
-            COLOR_BLOB
-        };
-        let surf = shade(p, n, CAM_RO, sun, base);
-        // Distance fog: blend toward sky as t grows.
-        let fog = ocl::exp(-t * FOG_DENSITY);
-        ocl::mix(sky(rd), surf, Vec3::splat(fog))
-    } else {
-        sky(rd)
-    };
-
-    let out = (ocl::clamp(color, Vec3::ZERO, Vec3::ONE) * 255.0)
-        .as_uvec3()
-        .extend(255);
-
-    let coord = IVec2::new(px as i32, py as i32);
+    let coord = Int2::new(px as i32, py as i32);
     unsafe {
         image.write(coord, out);
     }

@@ -9,5 +9,12 @@ spirv-std.workspace = true
 opencl3.workspace = true
 nbody = { path = "../kernels/nbody" }
 
+# Host smoke tests link the kernel crates directly (rlib) and call the
+# same `pixel_color`-style host fallbacks that drive the GPU on-device.
+# Letting `cargo test -p runner` exercise the cl::* arithmetic path on
+# the CPU complements the GPU run.
+[dev-dependencies]
+raymarch = { path = "../kernels/raymarch" }
+
 [lints]
 workspace = true
