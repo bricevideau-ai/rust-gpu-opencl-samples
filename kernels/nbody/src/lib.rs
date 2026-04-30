@@ -105,8 +105,10 @@ fn accel(bodies: &[Body], i: usize, pos: DVec3) -> DVec3 {
             let other = bodies[j];
             let d = other.pos - pos;
             // |d|² + ε² (the softening avoids the 1/r blow-up at close
-            // approach). `d.dot(d)` lowers to a single dot-product.
-            let dist_sq = d.dot(d) + SOFTENING_SQ;
+            // approach). `ocl::dot` lowers to core SPIR-V `OpDot`,
+            // unlike glam's `Vec3::dot` which scalarises to 3 OpFMul
+            // + 2 OpFAdd.
+            let dist_sq = ocl::dot(d, d) + SOFTENING_SQ;
             // a += G * m_other * d / |d|³  =  G * m_other * d / dist_sq^(3/2)
             let inv_dist = ocl::rsqrt(dist_sq);
             let inv_dist3 = inv_dist * inv_dist * inv_dist;
