@@ -705,6 +705,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nbody"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "spirv-std",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

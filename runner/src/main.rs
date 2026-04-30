@@ -72,6 +72,18 @@ impl OclContext {
         })
     }
 
+    /// Allocate a device buffer for `len` `T`s with no host-side
+    /// initialisation. Wraps `Buffer::create(null_mut())` so callers
+    /// don't need an `unsafe` block — `null_mut()` makes OpenCL
+    /// allocate fresh device memory and ignore the host_ptr entirely,
+    /// avoiding the dereference contract that makes `Buffer::create`
+    /// generally unsafe.
+    fn alloc<T>(&self, len: usize) -> Result<DeviceSlice<T>, Box<dyn std::error::Error>> {
+        let buffer =
+            unsafe { Buffer::<T>::create(&self.context, CL_MEM_READ_WRITE, len, ptr::null_mut())? };
+        Ok(DeviceSlice { buffer, len })
+    }
+
     fn download<T>(
         &self,
         src: &DeviceSlice<T>,
@@ -173,6 +185,14 @@ impl KernelArg for f32 {
     }
 }
 
+impl KernelArg for f64 {
+    fn set(&self, exec: &mut ExecuteKernel<'_>) {
+        unsafe {
+            exec.set_arg(self);
+        }
+    }
+}
+
 /// Viewport struct matching the kernel's `Viewport` type layout.
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -211,6 +231,24 @@ impl KernelArg for LocalBuffer {
 fn compile_kernel(path: &Path) -> Result<(Vec<u8>, Duration), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let result: CompileResult = SpirvBuilder::new(path, "spirv-unknown-opencl1.2")
+        .shader_panic_strategy(ShaderPanicStrategy::DebugPrintfThenExit {
+            print_inputs: true,
+            print_backtrace: true,
+        })
+        .build()?;
+    let spv_path = result.module.unwrap_single();
+    let spv_bytes = std::fs::read(spv_path)?;
+    Ok((spv_bytes, start.elapsed()))
+}
+
+/// OpenCL 1.2 + `Float64` capability (opt-in for the OpenCL SPIR-V env;
+/// not all OpenCL targets require it). Uses the same DebugPrintfThenExit
+/// abort strategy as the default `compile_kernel` so panic messages
+/// surface on the host.
+fn compile_kernel_f64(path: &Path) -> Result<(Vec<u8>, Duration), Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let result: CompileResult = SpirvBuilder::new(path, "spirv-unknown-opencl1.2")
+        .capability(Capability::Float64)
         .shader_panic_strategy(ShaderPanicStrategy::DebugPrintfThenExit {
             print_inputs: true,
             print_backtrace: true,
@@ -557,6 +595,218 @@ fn run_mandelbrot_image(ocl: &OclContext) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+/// Host-side analogue of OpenCL's `double3`: 24 bytes of payload with
+/// the 32-byte alignment + stride that OpenCL gives the type. Lets the
+/// `Body` struct mirror the device layout without any explicit padding
+/// fields — Rust inserts the inter-field and trailing padding from
+/// the `align(32)` attribute.
+#[repr(C, align(32))]
+#[derive(Copy, Clone, Debug, Default)]
+struct OclDouble3([f64; 3]);
+
+impl std::ops::Deref for OclDouble3 {
+    type Target = [f64; 3];
+    fn deref(&self) -> &[f64; 3] {
+        &self.0
+    }
+}
+
+/// Body host-side layout, matching `nbody::Body` on the device.
+///
+/// The kernel's `pos`/`vel` are `glam::DVec3`, which rust-gpu lowers
+/// to `OpTypeVector double 3` inside the struct. OpenCL gives that
+/// type the alignment of `double4` (32 bytes), and the struct itself
+/// is therefore 32-byte aligned. `OclDouble3` carries that alignment;
+/// Rust pads `Body` to 96 bytes automatically (8 bytes after `mass` to
+/// reach the struct's 32-byte alignment).
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct Body {
+    pos: OclDouble3,
+    vel: OclDouble3,
+    mass: f64,
+}
+
+const _: () = assert!(core::mem::size_of::<Body>() == 96);
+const _: () = assert!(core::mem::align_of::<Body>() == 32);
+
+impl Body {
+    fn new(pos: [f64; 3], vel: [f64; 3], mass: f64) -> Self {
+        Self {
+            pos: OclDouble3(pos),
+            vel: OclDouble3(vel),
+            mass,
+        }
+    }
+
+    fn at_rest(pos: [f64; 3], mass: f64) -> Self {
+        Self::new(pos, [0.0; 3], mass)
+    }
+}
+
+/// Total kinetic energy of the system. Used as a sanity check on the
+/// integrator: a leapfrog step with reasonable dt should preserve total
+/// energy to within a small drift over thousands of steps.
+fn kinetic(bodies: &[Body]) -> f64 {
+    bodies
+        .iter()
+        .map(|b| {
+            let v2 = b.vel[0] * b.vel[0] + b.vel[1] * b.vel[1] + b.vel[2] * b.vel[2];
+            0.5 * b.mass * v2
+        })
+        .sum()
+}
+
+/// Total gravitational potential energy of the system.
+///   U = -G · Σᵢ<ⱼ mᵢ·mⱼ / |xᵢ - xⱼ|
+/// Includes the same Plummer softening as the kernel so KE+PE values
+/// are comparable to the kernel's energy.
+fn potential(bodies: &[Body]) -> f64 {
+    const G: f64 = 1.0;
+    const SOFTENING_SQ: f64 = 0.01;
+    let mut u = 0.0;
+    for i in 0..bodies.len() {
+        for j in (i + 1)..bodies.len() {
+            let dx = bodies[i].pos[0] - bodies[j].pos[0];
+            let dy = bodies[i].pos[1] - bodies[j].pos[1];
+            let dz = bodies[i].pos[2] - bodies[j].pos[2];
+            let r2 = dx * dx + dy * dy + dz * dz + SOFTENING_SQ;
+            u -= G * bodies[i].mass * bodies[j].mass / r2.sqrt();
+        }
+    }
+    u
+}
+
+fn total_momentum(bodies: &[Body]) -> [f64; 3] {
+    let mut p = [0.0; 3];
+    for b in bodies {
+        p[0] += b.mass * b.vel[0];
+        p[1] += b.mass * b.vel[1];
+        p[2] += b.mass * b.vel[2];
+    }
+    p
+}
+
+fn run_nbody(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n═══ N-body (f64 vectors) ═══");
+
+    // The kernel uses double-precision throughout; bail early on
+    // devices that don't advertise `cl_khr_fp64`. Many integrated GPUs
+    // (e.g. Intel Iris) report OpenCL 3.0 but no fp64 support.
+    let device = Device::new(ocl.device_id);
+    let extensions = device.extensions()?;
+    if !extensions.contains("cl_khr_fp64") {
+        println!("SKIP: device does not support cl_khr_fp64");
+        return Ok(());
+    }
+
+    let kernel_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernels/nbody");
+    let (spv_bytes, compile_time) = compile_kernel_f64(&kernel_crate)?;
+    println!("Compiled: {} bytes, {compile_time:?}", spv_bytes.len());
+
+    let program = ocl.build_program(&spv_bytes)?;
+    let kernel = Kernel::create(&program, "step")?;
+
+    // Initial conditions: 3-body figure-8 orbit (Chenciner & Montgomery
+    // 2000), the canonical zero-momentum bound 3-body solution. With
+    // unit masses, a body at position (0.97000436, -0.24308753, 0)
+    // moving with velocity (0.466203685, 0.43236573, 0), and the
+    // mirror-symmetric configuration on the other side. We follow the
+    // standard normalisation: third body at the origin moves with
+    // velocity (-0.93240737, -0.86473146, 0).
+    let initial = vec![
+        Body::new(
+            [0.97000436, -0.24308753, 0.0],
+            [0.466_203_685, 0.432_365_73, 0.0],
+            1.0,
+        ),
+        Body::new(
+            [-0.97000436, 0.24308753, 0.0],
+            [0.466_203_685, 0.432_365_73, 0.0],
+            1.0,
+        ),
+        Body::new([0.0, 0.0, 0.0], [-0.932_407_37, -0.864_731_46, 0.0], 1.0),
+        // Add a few extra bodies so the kernel has more than the
+        // canonical figure-8 to chew on. These live far enough out
+        // that they don't disrupt the central 3-body dance much over
+        // the simulation window.
+        Body::at_rest([5.0, 0.0, 0.0], 0.1),
+        Body::at_rest([-5.0, 0.0, 0.0], 0.1),
+        Body::at_rest([0.0, 5.0, 0.0], 0.1),
+        Body::at_rest([0.0, -5.0, 0.0], 0.1),
+    ];
+    let n = initial.len();
+    println!("Bodies:  {n}");
+
+    let buf_a = ocl.upload(&initial)?;
+    let buf_b: DeviceSlice<Body> = ocl.alloc(n)?;
+
+    let dt: f64 = 0.001;
+    let steps: usize = 1_000;
+
+    let energy_initial = kinetic(&initial) + potential(&initial);
+    let momentum_initial = total_momentum(&initial);
+    println!(
+        "Initial: E = {energy_initial:+.6}, |p| = {:+.6e}",
+        norm(momentum_initial)
+    );
+
+    // Ping-pong between the two buffers. Even step: read A, write B;
+    // odd step: read B, write A. After `steps` iterations the latest
+    // state lives in `final_buf`.
+    let (mut from_buf, mut to_buf) = (&buf_a, &buf_b);
+    let mut total_kernel_time = Duration::ZERO;
+    for _ in 0..steps {
+        let event = ocl.run(&kernel, &[n], None, &[from_buf, to_buf, &dt])?;
+        if let Some(d) = profiling_duration(&event) {
+            total_kernel_time += d;
+        }
+        std::mem::swap(&mut from_buf, &mut to_buf);
+    }
+    let final_buf = from_buf;
+
+    let mut final_state = vec![Body::at_rest([0.0; 3], 0.0); n];
+    ocl.download(final_buf, &mut final_state)?;
+
+    println!("Total kernel time: {total_kernel_time:?} ({steps} steps)");
+
+    let energy_final = kinetic(&final_state) + potential(&final_state);
+    let momentum_final = total_momentum(&final_state);
+    println!(
+        "Final:   E = {energy_final:+.6}, |p| = {:+.6e}",
+        norm(momentum_final)
+    );
+
+    let energy_drift = (energy_final - energy_initial) / energy_initial.abs();
+    println!("Energy drift: {:+.3e}", energy_drift);
+
+    // Validation: the leapfrog integrator with these dt + softening
+    // should keep relative energy drift well under 5% over the run,
+    // and total momentum drift small (the asymmetric extra bodies
+    // accumulate `f64` round-off but stay within ~1e-3).
+    let mut ok = true;
+    if energy_drift.abs() > 0.05 {
+        eprintln!("FAIL: energy drift {energy_drift:.3e} > 5%");
+        ok = false;
+    }
+    let p_drift = norm([
+        momentum_final[0] - momentum_initial[0],
+        momentum_final[1] - momentum_initial[1],
+        momentum_final[2] - momentum_initial[2],
+    ]);
+    if p_drift > 1e-2 {
+        eprintln!("FAIL: momentum drift {p_drift:.3e} > 1e-2");
+        ok = false;
+    }
+
+    println!("{}", if ok { "OK" } else { "FAIL" });
+    Ok(())
+}
+
+fn norm(v: [f64; 3]) -> f64 {
+    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
 fn run_raymarch(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n═══ Ray-marched SDF ═══");
 
@@ -668,12 +918,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("debug-abort") => run_debug_abort(&ocl)?,
         Some("mandelbrot-image") => run_mandelbrot_image(&ocl)?,
         Some("raymarch") => run_raymarch(&ocl)?,
+        Some("nbody") => run_nbody(&ocl)?,
         _ => {
             run_collatz(&ocl)?;
             run_mandelbrot(&ocl)?;
             run_reduce(&ocl)?;
             run_mandelbrot_image(&ocl)?;
             run_raymarch(&ocl)?;
+            run_nbody(&ocl)?;
         }
     }
 

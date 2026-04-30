@@ -6,6 +6,7 @@ members = [
     "kernels/reduce",
     "kernels/mandelbrot-image",
     "kernels/raymarch",
+    "kernels/nbody",
     "runner",
 ]
 
