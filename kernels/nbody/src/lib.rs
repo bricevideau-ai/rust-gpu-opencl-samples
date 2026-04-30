@@ -115,22 +115,6 @@ pub fn step(
     };
 }
 
-// Host-only mirrors of `spirv_std::arch::opencl_std::{dot, length}` so the
-// host-side verifier in `runner` can write the same vector idioms as this
-// kernel — `dot(b.vel, b.vel)`, `length(p_final - p_initial)`. The GPU
-// versions are reached via `ocl::*` and lower to `OpDot` / `OpExtInst Length`.
-#[cfg(not(target_arch = "spirv"))]
-pub fn dot(a: Double3, b: Double3) -> f64 {
-    let a = a.to_array();
-    let b = b.to_array();
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-#[cfg(not(target_arch = "spirv"))]
-pub fn length(v: Double3) -> f64 {
-    dot(v, v).sqrt()
-}
-
 /// Total acceleration on body `i` at position `pos`, summed over all
 /// other bodies. Plummer-softened. All math is `Double3`-based; the
 /// `*` of vector-by-scalar lowers to `OpVectorTimesScalar`.
