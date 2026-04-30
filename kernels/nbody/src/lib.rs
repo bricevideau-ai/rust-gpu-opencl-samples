@@ -1,27 +1,28 @@
-//! Direct (O(N²)) n-body gravitational simulation using `f64` vectors
-//! (`glam::DVec3`) for all arithmetic. Each kernel invocation advances
-//! the simulation by one timestep using the leapfrog (kick-drift-kick)
-//! integrator.
+//! Direct (O(N²)) n-body gravitational simulation using native OpenCL
+//! `double3` vectors (`spirv_std::cl::Double3`) for all arithmetic.
+//! Each kernel invocation advances the simulation by one timestep
+//! using the leapfrog (kick-drift-kick) integrator.
 //!
 //! Exercises codegen paths that no other sample currently uses:
 //!
-//! - **`DVec3` (f64 vectors) end-to-end** in a hot loop. Every body's
+//! - **`cl::Double3` end-to-end** in a hot loop. Every body's
 //!   acceleration is computed from N pairwise interactions, each doing
-//!   `DVec3` subtract / dot / scale. Validates the `Float64` capability
-//!   together with the per-component vector codegen path.
+//!   subtract / dot / scale on a native OpenCL 3-wide f64 vector with
+//!   the canonical `double3` ABI (32-byte aligned, 32-byte size with
+//!   trailing padding) — same layout host-side and device-side, no
+//!   wrapper newtype required.
 //! - **Array of structs** (`&mut [Body]`) as a `cross_workgroup`
-//!   parameter, where the struct contains `DVec3` fields (position +
-//!   velocity). Exercises `OpAccessChain` with chained indices
-//!   (`bodies[i].pos.x`) and the `MemberDecorate Offset` skip from
-//!   commit 6, on a struct whose fields are themselves vectors.
+//!   parameter, where the struct contains `Double3` fields (position +
+//!   velocity). Exercises `OpAccessChain` with chained indices on a
+//!   struct whose fields are themselves vectors.
 //! - **`opencl_std::sqrt` on a scalar `f64`** in a tight loop (~N calls
-//!   per thread). Most existing samples call math intrinsics only once
-//!   or twice per kernel invocation.
+//!   per thread).
 
 #![cfg_attr(target_arch = "spirv", no_std)]
 
-use glam::{DVec3, U64Vec3};
+use glam::U64Vec3;
 use spirv_std::arch::opencl_std as ocl;
+use spirv_std::cl::Double3;
 use spirv_std::{glam, spirv};
 
 /// Newtonian gravitational constant scaled for the sample's units. Real
@@ -34,18 +35,39 @@ const G: f64 = 1.0;
 /// require a much smaller timestep to remain stable.
 const SOFTENING_SQ: f64 = 0.01;
 
-/// Body state. `pos` and `vel` are `glam::DVec3` (f64 3-vectors).
-///
-/// Note: OpenCL gives `double3` the alignment of `double4` (32 bytes),
-/// so the host-side struct needs explicit padding around `pos`/`vel`
-/// and a 32-byte struct alignment. See the corresponding `Body` in the
-/// runner.
+/// Body state. `pos` and `vel` are native `cl::Double3` — same 32-byte
+/// layout host- and device-side, no `OclDouble3`-style wrapper needed.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct Body {
-    pub pos: DVec3,
-    pub vel: DVec3,
+    pub pos: Double3,
+    pub vel: Double3,
     pub mass: f64,
+}
+
+// Layout invariant — `Double3` is 32-byte aligned (vec3-double = vec4-double
+// in the OpenCL ABI), so `Body` ends up 96 bytes with trailing padding.
+const _: () = {
+    assert!(core::mem::size_of::<Body>() == 96);
+    assert!(core::mem::align_of::<Body>() == 32);
+};
+
+#[cfg(not(target_arch = "spirv"))]
+impl Body {
+    /// Constructs a body from raw `[x, y, z]` arrays — convenient when
+    /// host code wants to spell out coordinates as literals.
+    pub fn new(pos: [f64; 3], vel: [f64; 3], mass: f64) -> Self {
+        Self {
+            pos: Double3::from_array(pos),
+            vel: Double3::from_array(vel),
+            mass,
+        }
+    }
+
+    /// A body at rest at the given position.
+    pub fn at_rest(pos: [f64; 3], mass: f64) -> Self {
+        Self::new(pos, [0.0; 3], mass)
+    }
 }
 
 /// One leapfrog (kick-drift-kick) step:
@@ -93,11 +115,28 @@ pub fn step(
     };
 }
 
+// Host-only mirrors of `spirv_std::arch::opencl_std::{dot, length}` so the
+// host-side verifier in `runner` can write the same vector idioms as this
+// kernel — `dot(b.vel, b.vel)`, `length(p_final - p_initial)`. The GPU
+// versions are reached via `ocl::*` and lower to `OpDot` / `OpExtInst Length`.
+#[cfg(not(target_arch = "spirv"))]
+pub fn dot(a: Double3, b: Double3) -> f64 {
+    let a = a.to_array();
+    let b = b.to_array();
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[cfg(not(target_arch = "spirv"))]
+pub fn length(v: Double3) -> f64 {
+    dot(v, v).sqrt()
+}
+
 /// Total acceleration on body `i` at position `pos`, summed over all
-/// other bodies. Plummer-softened. All math is `DVec3`-based.
+/// other bodies. Plummer-softened. All math is `Double3`-based; the
+/// `*` of vector-by-scalar lowers to `OpVectorTimesScalar`.
 #[inline]
-fn accel(bodies: &[Body], i: usize, pos: DVec3) -> DVec3 {
-    let mut a = DVec3::ZERO;
+fn accel(bodies: &[Body], i: usize, pos: Double3) -> Double3 {
+    let mut a = Double3::default();
     let n = bodies.len();
     let mut j = 0usize;
     while j < n {
@@ -105,9 +144,7 @@ fn accel(bodies: &[Body], i: usize, pos: DVec3) -> DVec3 {
             let other = bodies[j];
             let d = other.pos - pos;
             // |d|² + ε² (the softening avoids the 1/r blow-up at close
-            // approach). `ocl::dot` lowers to core SPIR-V `OpDot`,
-            // unlike glam's `Vec3::dot` which scalarises to 3 OpFMul
-            // + 2 OpFAdd.
+            // approach). `ocl::dot` lowers to core SPIR-V `OpDot`.
             let dist_sq = ocl::dot(d, d) + SOFTENING_SQ;
             // a += G * m_other * d / |d|³  =  G * m_other * d / dist_sq^(3/2)
             let inv_dist = ocl::rsqrt(dist_sq);

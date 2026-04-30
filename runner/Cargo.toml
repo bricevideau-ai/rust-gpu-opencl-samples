@@ -5,7 +5,9 @@ edition.workspace = true
 
 [dependencies]
 spirv-builder.workspace = true
+spirv-std.workspace = true
 opencl3.workspace = true
+nbody = { path = "../kernels/nbody" }
 
 [lints]
 workspace = true
