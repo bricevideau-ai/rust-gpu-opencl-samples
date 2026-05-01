@@ -600,17 +600,13 @@ fn run_mandelbrot_image(ocl: &OclContext) -> Result<(), Box<dyn std::error::Erro
 // `dot`/`length` symbols. `Body` is `#[repr(C)] { Double3, Double3, f64 }`
 // → 96 bytes / 32-byte aligned (asserted in the kernel crate).
 use nbody::Body;
-use spirv_std::arch::opencl_std as ocl;
 use spirv_std::cl::Double3;
 
 /// Total kinetic energy of the system. Used as a sanity check on the
 /// integrator: a leapfrog step with reasonable dt should preserve total
 /// energy to within a small drift over thousands of steps.
 fn kinetic(bodies: &[Body]) -> f64 {
-    bodies
-        .iter()
-        .map(|b| 0.5 * b.mass * ocl::dot(b.vel, b.vel))
-        .sum()
+    bodies.iter().map(|b| 0.5 * b.mass * b.vel.dot(b.vel)).sum()
 }
 
 /// Total gravitational potential energy of the system.
@@ -624,7 +620,7 @@ fn potential(bodies: &[Body]) -> f64 {
     for i in 0..bodies.len() {
         for j in (i + 1)..bodies.len() {
             let d = bodies[j].pos - bodies[i].pos;
-            let r2 = ocl::dot(d, d) + SOFTENING_SQ;
+            let r2 = d.dot(d) + SOFTENING_SQ;
             u -= G * bodies[i].mass * bodies[j].mass / r2.sqrt();
         }
     }
@@ -700,7 +696,7 @@ fn run_nbody(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     let momentum_initial = total_momentum(&initial);
     println!(
         "Initial: E = {energy_initial:+.6}, |p| = {:+.6e}",
-        ocl::length(momentum_initial)
+        momentum_initial.length()
     );
 
     // Ping-pong between the two buffers. Even step: read A, write B;
@@ -726,7 +722,7 @@ fn run_nbody(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
     let momentum_final = total_momentum(&final_state);
     println!(
         "Final:   E = {energy_final:+.6}, |p| = {:+.6e}",
-        ocl::length(momentum_final)
+        momentum_final.length()
     );
 
     let energy_drift = (energy_final - energy_initial) / energy_initial.abs();
@@ -741,7 +737,7 @@ fn run_nbody(ocl: &OclContext) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("FAIL: energy drift {energy_drift:.3e} > 5%");
         ok = false;
     }
-    let p_drift = ocl::length(momentum_final - momentum_initial);
+    let p_drift = (momentum_final - momentum_initial).length();
     if p_drift > 1e-2 {
         eprintln!("FAIL: momentum drift {p_drift:.3e} > 1e-2");
         ok = false;
