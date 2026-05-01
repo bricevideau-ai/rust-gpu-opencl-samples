@@ -15,7 +15,11 @@ use spirv_std::arch::opencl_std as ocl;
 use spirv_std::cl::{Float3, Int2};
 // `num_traits::Float` is needed on SPIR-V targets to bring `cos`/`sin`/
 // `powf`/`exp` into scope on bare `f32` (no `std`), where the libm
-// intercept rewrites them to `OpExtInst <OpenCL.std> {cos, sin, …}`.
+// intercept rewrites them to `OpExtInst <OpenCL.std> {cos, sin, pow,
+// exp, …}`. `f32::min`/`max` route through the
+// `minimum_number_nsz_*` rustc intrinsics, intercepted directly in
+// the codegen and lowered to `OpExtInst <OpenCL.std> {fmin_common,
+// fmax_common}` on Kernel — no `Float` trait needed for those.
 // On the host the same methods come from `std`, so the import is unused
 // — `#[cfg(target_arch = "spirv")]` keeps clippy quiet on the host
 // runner build.
