@@ -13,6 +13,14 @@
 use glam::{USizeVec3, UVec4};
 use spirv_std::arch::opencl_std as ocl;
 use spirv_std::cl::{Float3, Int2};
+// `num_traits::Float` is needed on SPIR-V targets to bring `cos`/`sin`/
+// `powf`/`exp` into scope on bare `f32` (no `std`), where the libm
+// intercept rewrites them to `OpExtInst <OpenCL.std> {cos, sin, …}`.
+// On the host the same methods come from `std`, so the import is unused
+// — `#[cfg(target_arch = "spirv")]` keeps clippy quiet on the host
+// runner build.
+#[cfg(target_arch = "spirv")]
+use spirv_std::num_traits::Float;
 use spirv_std::{Image, glam, spirv};
 
 // ── Numeric tolerances ─────────────────────────────────────────
@@ -70,9 +78,11 @@ fn ray_at(ro: Float3, rd: Float3, t: f32) -> Float3 {
     rd.mul_add(Float3::splat(t), ro)
 }
 
-// Polynomial smooth-min — blends two SDFs over a radius `k`. All scalar
-// math, so the `ocl::*` free-function entry points are used (the
-// glam-style methods on `cl::*` vector types don't apply to bare `f32`).
+// Polynomial smooth-min — blends two SDFs over a radius `k`. The
+// scalar `clamp` stays as `ocl::clamp` because `f32::clamp` from
+// `core` inlines as branchy Rust source on SPIR-V (no fast-path),
+// while `ocl::clamp` lowers to a single `OpExtInst Fclamp`. Same for
+// `mix` — there's no scalar `f32::mix` in `core` to reach for.
 fn smin(a: f32, b: f32, k: f32) -> f32 {
     let h = ocl::clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
     ocl::mix(b, a, h) - k * h * (1.0 - h)
@@ -145,7 +155,7 @@ fn shade(p: Float3, n: Float3, ro: Float3, sun: Float3, base: Float3) -> Float3 
 
     // Phong specular: reflect view about normal, dot with sun, raise to power.
     let refl = n * (2.0 * view.dot(n)) - view;
-    let spec = ocl::pow(ocl::clamp(refl.dot(sun), 0.0, 1.0), SPECULAR_POWER) * shadow;
+    let spec = ocl::clamp(refl.dot(sun), 0.0, 1.0).powf(SPECULAR_POWER) * shadow;
 
     let diff = DIFFUSE * ndotl * shadow;
     base * (SUN_COLOR * diff + Float3::splat(AMBIENT)) + SUN_COLOR * spec
@@ -161,10 +171,13 @@ pub fn pixel_color(u: f32, v: f32) -> Float3 {
     let rd = (forward + (right * (u * FOV_SCALE)) + (cam_up * (v * FOV_SCALE))).normalize();
 
     // Sun direction from spherical coords (azimuth, elevation).
+    // `f32::sin`/`cos` lower to `OpExtInst OpenCL.std {sin,cos}` via
+    // the libm intercept on Kernel targets — same codegen as
+    // `ocl::sin`/`cos`, just nicer to read.
     let sun = Float3::new(
-        ocl::cos(SUN_EL) * ocl::sin(SUN_AZ),
-        ocl::sin(SUN_EL),
-        ocl::cos(SUN_EL) * ocl::cos(SUN_AZ),
+        SUN_EL.cos() * SUN_AZ.sin(),
+        SUN_EL.sin(),
+        SUN_EL.cos() * SUN_AZ.cos(),
     )
     .normalize();
 
@@ -180,7 +193,7 @@ pub fn pixel_color(u: f32, v: f32) -> Float3 {
         };
         let surf = shade(p, n, CAM_RO, sun, base);
         // Distance fog: blend toward sky as t grows.
-        let fog = ocl::exp(-t * FOG_DENSITY);
+        let fog = (-t * FOG_DENSITY).exp();
         sky(rd).lerp(surf, fog)
     } else {
         sky(rd)
