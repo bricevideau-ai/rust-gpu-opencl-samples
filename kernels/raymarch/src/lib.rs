@@ -93,7 +93,7 @@ fn scene_sdf(p: Float3) -> f32 {
     let d_b = p.distance(SPHERE_B) - RADIUS_B;
     let blob = smin(d_a, d_b, SMIN_K);
     let plane = p.y() - GROUND_Y;
-    ocl::fmin(blob, plane)
+    blob.min(plane)
 }
 
 fn scene_normal(p: Float3) -> Float3 {
@@ -133,7 +133,7 @@ fn soft_shadow(ro: Float3, rd: Float3) -> f32 {
         if d < EPSILON {
             return 0.0;
         }
-        res = ocl::fmin(res, SHADOW_K * d / t);
+        res = res.min(SHADOW_K * d / t);
         t += ocl::clamp(d, SHADOW_STEP_MIN, SHADOW_STEP_MAX);
         if t > SHADOW_MAX_DIST {
             break;
