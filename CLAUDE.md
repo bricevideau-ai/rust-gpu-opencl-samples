@@ -4,18 +4,21 @@
 
 OpenCL compute kernel samples written in Rust using rust-gpu. Kernels compile to OpenCL SPIR-V and run on any OpenCL device with SPIR-V IL support (pocl 6.0+, Intel GPU/CPU, etc.).
 
-Depends on the `opencl-kernel-support` branch of https://github.com/bricevideau-ai/rust-gpu
+Depends on the [`opencl-kernel-support`](https://github.com/bricevideau-ai/rust-gpu/tree/opencl-kernel-support) branch of `bricevideau-ai/rust-gpu`. Both `Cargo.toml` and `Cargo.lock` pin against that branch; bump with `cargo update -p spirv-builder -p spirv-std` after a stable promotion.
 
 ## Project structure
 
 ```
 kernels/
-  collatz/      — Collatz conjecture kernel
-  mandelbrot/   — Mandelbrot set with complex numbers (num-complex), uses printf
-  reduce/       — Hierarchical reduction using subgroup ops + shared memory (OpenCL 2.0)
-  mandelbrot-image/ — Mandelbrot set rendered to an OpenCL 2D image (Full HD PPM output)
-  raymarch/     — SDF ray marcher exercising spirv_std::arch::opencl_std math intrinsics
-runner/         — Host-side OpenCL runner with helpers
+  collatz/           — Collatz conjecture kernel
+  mandelbrot/        — Mandelbrot set with complex numbers (num-complex), uses printf
+  mandelbrot-image/  — Mandelbrot rendered to an OpenCL 2D image (PPM out)
+  reduce/            — Hierarchical reduction using subgroup ops + shared memory (OpenCL 2.0)
+  raymarch/          — SDF ray marcher built end-to-end on spirv_std::cl::Float3 +
+                       spirv_std::arch::opencl_std math intrinsics
+  nbody/             — Direct O(N²) gravitational sim built on spirv_std::cl::Double3
+                       (OpenCL `double3` ABI), leapfrog integrator
+runner/              — Host-side OpenCL runner with helpers
 ```
 
 ## Key patterns
@@ -28,6 +31,15 @@ runner/         — Host-side OpenCL runner with helpers
 - Work item ID: `#[spirv(global_invocation_id)] id: USizeVec3`
 - Scalar args: just by value (`max_iter: u32`)
 - Struct args: by value, works for scalar-only structs (`vp: Viewport`)
+- Slice-of-struct args: `&mut [Body]` works as a `cross_workgroup` arg even when the struct contains native `cl::*` vector fields — the host side passes `(ptr, len)` matching the rust-gpu slice decomposition
+
+### Native `cl::*` vector types
+Used by `raymarch` (`cl::Float3`, `cl::Int2`) and `nbody` (`cl::Double3`).
+- `cl::Float3 / Double3 / IntN / etc.` from `spirv_std::cl::*` — distinct from glam, lowers to native `OpTypeVector` (no per-component scalarisation through glam's scalar fallback) and matches the OpenCL `floatN`/`doubleN` ABI for host interop
+- Operators `+ - * /` and `Mul<Scalar>` emit `OpFAdd`/`OpVectorTimesScalar`/etc. directly
+- `spirv_std::arch::opencl_std::sqrt(v)` / `length(v)` / `normalize(v)` / `dot(a,b)` etc. accept these via the same `*OrVector` traits as glam — the same line works on both
+- Method-form (`a.dot(b)`, `v.normalize()`, `v.length()`) is also wired up via `cl::*` inherent impls; pick free-function vs method by readability
+- Host-side fallbacks are provided for every operator and op, so `runner` can compute the same result on CPU for bit-for-bit smoke tests (see the raymarch one-pixel host check)
 
 ### Image kernels
 - Target `spirv-unknown-opencl1.2` — no explicit capability needed; codegen auto-adds `ImageBasic` when it sees an Image kernel parameter (OpenCL 1.2 supports separate read_only / write_only image kernel args; the same image object can be read in one kernel and written by another)
@@ -52,10 +64,15 @@ runner/         — Host-side OpenCL runner with helpers
 - `%f` accepts both f32 and f64 (no promotion needed)
 - Requires `#![cfg_attr(target_arch = "spirv", feature(asm_experimental_arch))]` in the kernel crate
 
+### Debug-printf abort
+- Set `.print_metadata(MetadataPrintout::None)` and `.shader_panic_strategy(ShaderPanicStrategy::DebugPrintfThenExit { ... })` on the SpirvBuilder
+- Panics in the kernel become `NonSemantic.DebugPrintf` from SPIR-T, which a post-link pass in rust-gpu rewrites to `OpenCL.std` printf — visible on stock OpenCL runtimes that don't support NonSemantic extensions
+- Sample: `cargo run -p runner --release -- debug-abort`
+
 ### Runner
 - `OclContext` — wraps device, context, queue
 - `DeviceSlice<T>` — buffer + length pair (matches Rust-GPU slice decomposition)
-- `KernelArg` trait — implemented for `DeviceSlice`, `u32`, `f32`, `Viewport`
+- `KernelArg` trait — implemented for `DeviceSlice`, `u32`, `f32`, `Viewport`, `cl::*` scalar wrappers used by samples
 - Slices automatically set two kernel args (pointer + usize length)
 - `run()` accepts optional `local_work_size` for workgroup-based kernels
 - `compile_kernel()` for OpenCL 1.2, `compile_kernel_opencl2()` for OpenCL 2.0 + Groups
@@ -68,14 +85,15 @@ runner/         — Host-side OpenCL runner with helpers
 ## How to build and run
 
 ```bash
-cargo check -p collatz -p mandelbrot -p reduce -p runner  # check everything compiles
+cargo check --workspace                                    # check everything compiles
 cargo run -p runner --release                              # run all samples (needs OpenCL runtime)
-cargo run -p runner --release -- collatz                   # run specific sample
-cargo run -p runner --release -- mandelbrot                # run specific sample
-cargo run -p runner --release -- reduce                    # run specific sample (OpenCL 2.0)
-cargo run -p runner --release -- mandelbrot-image          # run specific sample (needs image support)
-cargo run -p runner --release -- raymarch                  # run specific sample (needs image support; pocl 7.x recommended)
-cargo run -p runner --release -- debug-abort               # debug-printf abort strategy demo (not in default set)
+cargo run -p runner --release -- collatz                   # specific samples:
+cargo run -p runner --release -- mandelbrot
+cargo run -p runner --release -- reduce                    #   (OpenCL 2.0 + Groups)
+cargo run -p runner --release -- mandelbrot-image          #   (needs image support)
+cargo run -p runner --release -- raymarch                  #   (cl::Float3 + opencl_std math)
+cargo run -p runner --release -- nbody                     #   (cl::Double3, needs Float64)
+cargo run -p runner --release -- debug-abort               #   (debug-printf abort demo, opt-in)
 ```
 
 ## How to add a new sample
@@ -97,7 +115,8 @@ cargo run -p runner --release -- debug-abort               # debug-printf abort 
 
 ## Known issues
 
-- `is_multiple_of(2)` crashes spirv-opt's `DeadBranchElimPass`. The compiled-tools path isolates this via fork() and falls back to safe optimization passes.
-- pocl 7.0+ has a regression with multi-workgroup kernels using subgroup ops + subgroup builtins + shared memory (last workgroup gets wrong data). Works correctly on pocl 6.0 and Intel GPU.
-- The `raymarch` sample crashes pocl 6.0 with `LLVM ERROR: Instruction Combining did not reach a fixpoint after 1 iterations` — a known pocl 6.0 limitation hit by complex kernels using OpenCL.std math intrinsics. Works on pocl 7.2-pre and Intel GPU.
-- Verified working on: pocl 6.0 (CPU), pocl 7.2-pre (CPU, with caveats above), Intel Gen11 GPU.
+- **`is_multiple_of(2)` crashes spirv-opt's `DeadBranchElimPass`**. The compiled-tools path isolates this via fork() and falls back to safe optimization passes. Upstream: https://github.com/KhronosGroup/SPIRV-Tools/issues/6632
+- **pocl `__alignof__` cap on aarch64**: pocl's OpenCL C compiler reports the alignment of every vector type larger than 16 bytes as 16 (so `double3`/`double4` come back 16 instead of 32, `long16` comes back 16 instead of 128, etc.). Affects host/device ABI for OpenCL `*N` vector types. Reproducer: `pocl-vector-align-repro/` (sibling repo). Filed as pocl#2174; fixed by a header-only patch (`__attribute__((aligned(N)))` on every vector typedef in `include/opencl-c-base.h`). Without that patch, host-side `cl_double3` buffers and device-side `cl::Double3` arrays disagree on layout — the rust-gpu codegen and the CPU host both produce the spec-correct values, only pocl's OpenCL C path is off.
+- **pocl 7.x multi-workgroup subgroup regression**: a corner case in pocl 7.x with multi-workgroup kernels using subgroup ops + subgroup builtins + shared memory makes the last workgroup get wrong data. Works correctly on pocl 6.0 and Intel GPU.
+- **`raymarch` on pocl 6.0**: crashes with `LLVM ERROR: Instruction Combining did not reach a fixpoint after 1 iterations` — known pocl 6.0 limitation hit by complex kernels using OpenCL.std math intrinsics. Works on pocl 7.2-pre and Intel GPU.
+- **Verified working on**: pocl 6.0 (CPU), pocl 7.2-pre (CPU; `nbody` on aarch64 needs the alignment patch from pocl#2174 above to match host layout for `cl::Double3`), Intel Gen11 GPU.
