@@ -42,11 +42,15 @@ Used by `raymarch` (`cl::Float3`, `cl::Int2`) and `nbody` (`cl::Double3`).
 - Host-side fallbacks are provided for every operator and op, so `runner` can compute the same result on CPU for bit-for-bit smoke tests (see the raymarch one-pixel host check)
 
 ### Image kernels
-- Target `spirv-unknown-opencl1.2` — no explicit capability needed; codegen auto-adds `ImageBasic` when it sees an Image kernel parameter (OpenCL 1.2 supports separate read_only / write_only image kernel args; the same image object can be read in one kernel and written by another)
-- For read+write of the same image in a single kernel, use `spirv-unknown-opencl2.0` and explicitly add `.capability(Capability::ImageReadWrite)` (the codegen can't infer this — it changes WriteOnly to ReadWrite)
-- `image: &Image!(2D, type=u32, sampled=false)` → AccessQualifier::ReadOnly
-- `image: &mut Image!(2D, type=f32, sampled=false)` → AccessQualifier::WriteOnly on 1.2, AccessQualifier::ReadWrite when ImageReadWrite is enabled
+- Target `spirv-unknown-opencl1.2` — no explicit capability needed; codegen auto-adds `ImageBasic` when it sees an Image kernel parameter, and auto-adds `ImageReadWrite` when a `ReadWrite OpTypeImage` is emitted
+- AccessQualifier derivation:
+  - `image: &Image!(2D, type=u32, sampled=false)` → `ReadOnly` (always works on OpenCL 1.2+)
+  - `image: &mut Image!(2D, type=f32, sampled=false)` → `ReadWrite` by default (auto-declares `ImageReadWrite`, requires OpenCL 2.0+). On `spirv-unknown-opencl1.2` this is a compile error pointing the user at the explicit override below.
+  - **For write-only outputs on OpenCL 1.2**: add `#[spirv(image_access = "write_only")]` to the param — produces `WriteOnly` qualifier without requiring `ImageReadWrite`. Use this for any `&mut Image` parameter that the kernel only writes to (never reads). Examples in this repo: `raymarch::raymarch`, `mandelbrot-image::mandelbrot_image`, `mandelbrot-image::fill_gradient`.
+  - `#[spirv(image_access = "read_only"|"write_only"|"read_write")]` is coherence-checked against `&`/`&mut` (incoherent pairings are a compile error).
+- For read+write of the same image in a single kernel, use `spirv-unknown-opencl2.0` and let the default `&mut Image → ReadWrite` rule do its thing; the codegen auto-declares `ImageReadWrite` for you.
 - `unsafe { image.write(coord, color) }` / `unsafe { image.read(coord) }` for image I/O
+- `image.query_format()` / `image.query_order()` for runtime queries against the OpenCL SPIR-V env spec's "Image Channel Data Type Mapping" / "Image Channel Order Mapping" tables — Kernel-only intrinsics, useful when a kernel wants to specialise per actual host storage format (OpenCL `OpTypeImage` always has `Image Format = Unknown`)
 - Host-side: `opencl3::memory::Image::create()` with `cl_image_format` and `cl_image_desc`; pass the image via `image.get()` (returns `cl_mem`) when calling `set_arg`, not `&image`
 - Check `device.image_support()` before running image kernels
 

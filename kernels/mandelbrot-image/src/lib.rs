@@ -17,7 +17,7 @@ fn mandelbrot_color(ix: u32, max_iter: u32) -> UVec4 {
 #[spirv(kernel)]
 pub fn mandelbrot_image(
     #[spirv(global_invocation_id)] id: USizeVec3,
-    image: &mut Image!(2D, type=u32, sampled=false),
+    #[spirv(image_access = "write_only")] image: &mut Image!(2D, type=u32, sampled=false),
     width: u32,
     height: u32,
     max_iter: u32,
@@ -51,7 +51,7 @@ pub fn mandelbrot_image(
 #[spirv(kernel)]
 pub fn fill_gradient(
     #[spirv(global_invocation_id)] id: USizeVec3,
-    image: &mut Image!(2D, type=f32, sampled=false),
+    #[spirv(image_access = "write_only")] image: &mut Image!(2D, type=f32, sampled=false),
     width: u32,
     height: u32,
 ) {
