@@ -20,10 +20,10 @@
 
 #![cfg_attr(target_arch = "spirv", no_std)]
 
-use glam::U64Vec3;
+use spirv_std::glam::U64Vec3;
 use spirv_std::arch::opencl_std as ocl;
 use spirv_std::cl::Double3;
-use spirv_std::{glam, spirv};
+use spirv_std::spirv;
 
 /// Newtonian gravitational constant scaled for the sample's units. Real
 /// G is ~6.674e-11; we use a unit value so position/velocity stay in

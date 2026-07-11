@@ -1,9 +1,9 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 #![cfg_attr(target_arch = "spirv", feature(asm_experimental_arch))]
 
-use glam::USizeVec3;
+use spirv_std::glam::USizeVec3;
 use num_complex::Complex32;
-use spirv_std::{glam, spirv};
+use spirv_std::spirv;
 
 /// Viewport parameters for the Mandelbrot computation.
 #[derive(Copy, Clone)]

@@ -1,9 +1,9 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 #![allow(clippy::too_many_arguments)]
 
-use glam::USizeVec3;
+use spirv_std::glam::USizeVec3;
 use spirv_std::arch::{group_i_add, workgroup_memory_barrier_with_group_sync};
-use spirv_std::{glam, spirv};
+use spirv_std::spirv;
 
 const WG_SIZE: usize = 32;
 

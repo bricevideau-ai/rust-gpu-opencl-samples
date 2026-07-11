@@ -1,7 +1,7 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 
-use glam::USizeVec3;
-use spirv_std::{glam, spirv};
+use spirv_std::glam::USizeVec3;
+use spirv_std::spirv;
 
 /// Returns the length of the Collatz sequence for `n`, or `None` if
 /// `n` is zero or the sequence overflows a `u32`.

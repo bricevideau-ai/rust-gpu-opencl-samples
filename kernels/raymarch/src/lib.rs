@@ -10,7 +10,7 @@
 
 #![cfg_attr(target_arch = "spirv", no_std)]
 
-use glam::{USizeVec3, UVec4};
+use spirv_std::glam::{USizeVec3, UVec4};
 use spirv_std::arch::opencl_std as ocl;
 use spirv_std::cl::{Float3, Int2};
 // `num_traits::Float` is needed on SPIR-V targets to bring `cos`/`sin`/
@@ -25,7 +25,7 @@ use spirv_std::cl::{Float3, Int2};
 // runner build.
 #[cfg(target_arch = "spirv")]
 use spirv_std::num_traits::Float;
-use spirv_std::{Image, glam, spirv};
+use spirv_std::{Image, spirv};
 
 // ── Numeric tolerances ─────────────────────────────────────────
 const EPSILON: f32 = 0.001; // small-distance tolerance reused throughout

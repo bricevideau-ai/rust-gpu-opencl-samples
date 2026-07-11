@@ -10,7 +10,6 @@ crate-type = ["dylib", "rlib"]
 
 [dependencies]
 spirv-std.workspace = true
-glam.workspace = true
 
 [lints]
 workspace = true

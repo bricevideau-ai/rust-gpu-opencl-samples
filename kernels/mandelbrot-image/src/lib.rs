@@ -1,6 +1,6 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 
-use glam::{USizeVec3, UVec4, Vec4};
+use spirv_std::glam::{USizeVec3, UVec4, Vec4};
 use spirv_std::{Image, glam, spirv};
 
 fn mandelbrot_color(ix: u32, max_iter: u32) -> UVec4 {
